@@ -29,6 +29,8 @@ let viewForwardStack = [];
 const openedAlbumCases = new Set();
 let currentTrack = null;
 let playbackQueue = [];
+let playbackQueueExplicit = false;
+let draggedQueueTrack = null;
 let isPlaying = false;
 let simProgress = 38;
 let simTimer = null;
@@ -246,7 +248,7 @@ function render() {
   $('#albumCount').textContent = albums.length;
   $('#songCount').textContent = allTracks().length;
   updateHistoryControls();
-  applySelectionClasses();renderBulkSelectionBar();
+  applySelectionClasses();renderBulkSelectionBar();renderQueue();
 }
 
 function albumCover(a, extra = '') {
@@ -837,26 +839,44 @@ function showTrackMenu(track){
   };
 }
 
+function effectivePlaybackQueue(){return playbackQueueExplicit?playbackQueue:(currentTrack?allTracks().filter(track=>!track.pending):[])}
+function materializePlaybackQueue(){if(!playbackQueueExplicit){playbackQueue=effectivePlaybackQueue();playbackQueueExplicit=true}}
+function renderQueue(){
+  const list=$('#queueList'),button=$('#queueButton'),badge=$('#queueCount'),summary=$('#queueSummary');if(!list||!button)return;
+  const validIds=new Set(allTracks().map(track=>track.id));if(playbackQueueExplicit)playbackQueue=playbackQueue.filter(track=>validIds.has(track.id));
+  const tracks=effectivePlaybackQueue(),currentIndex=currentTrack?tracks.findIndex(track=>track.id===currentTrack.id):-1;
+  badge.textContent=tracks.length>99?'99+':tracks.length;badge.classList.toggle('visible',tracks.length>0);button.classList.toggle('active',$('#queuePanel').classList.contains('open'));
+  summary.textContent=tracks.length?`${tracks.length} track${tracks.length===1?'':'s'} · ${playbackQueueExplicit?'Active collection':'Library order'}`:'No songs queued';
+  if(!tracks.length){list.innerHTML=`<div class="queue-empty">${icon('list')}<b>Your queue is empty</b><span>Play an album, artist, or playlist to fill it.</span></div>`;return}
+  list.innerHTML=tracks.map((track,index)=>{const album=albumById(track.albumId),style=album?.customCover?`style="background-image:url(&quot;${esc(album.customCover)}&quot;)"`:'';return `<article class="queue-item ${index===currentIndex?'current':''}" draggable="true" data-queue-track="${track.id}"><button class="queue-grip" aria-label="Reorder ${esc(track.title)}">⋮⋮</button><button class="queue-track-main" data-queue-play="${track.id}"><span class="queue-position">${index===currentIndex?icon(isPlaying?'pause':'play'):index+1}</span><span class="thumb ${album?.cover||'cover-8'}" ${style}></span><span class="queue-copy"><b>${esc(track.title)}</b><small>${esc(track.artist)} · ${esc(track.album)}</small></span></button><button class="queue-remove" data-queue-remove="${track.id}" aria-label="Remove ${esc(track.title)} from queue">${icon('close')}</button></article>`}).join('');
+  $$('[data-queue-play]',list).forEach(row=>row.onclick=()=>{materializePlaybackQueue();const track=playbackQueue.find(item=>item.id===row.dataset.queuePlay);if(track)playTrack(track,true)});
+  $$('[data-queue-remove]',list).forEach(remove=>remove.onclick=()=>{materializePlaybackQueue();playbackQueue=playbackQueue.filter(track=>track.id!==remove.dataset.queueRemove);renderQueue()});
+  $$('[data-queue-track]',list).forEach(row=>{row.addEventListener('dragstart',()=>{materializePlaybackQueue();draggedQueueTrack=row.dataset.queueTrack;row.classList.add('dragging')});row.addEventListener('dragend',()=>{draggedQueueTrack=null;row.classList.remove('dragging');$$('.queue-drop-target',list).forEach(item=>item.classList.remove('queue-drop-target'))});row.addEventListener('dragover',event=>{event.preventDefault();if(row.dataset.queueTrack!==draggedQueueTrack)row.classList.add('queue-drop-target')});row.addEventListener('dragleave',()=>row.classList.remove('queue-drop-target'));row.addEventListener('drop',event=>{event.preventDefault();const targetId=row.dataset.queueTrack;if(!draggedQueueTrack||draggedQueueTrack===targetId)return;const from=playbackQueue.findIndex(track=>track.id===draggedQueueTrack),to=playbackQueue.findIndex(track=>track.id===targetId);if(from<0||to<0)return;const[moved]=playbackQueue.splice(from,1);playbackQueue.splice(to,0,moved);renderQueue()})});
+}
+function openQueue(){const panel=$('#queuePanel');panel.classList.add('open');panel.setAttribute('aria-hidden','false');$('#queueBackdrop').classList.add('open');$('#queueButton').setAttribute('aria-expanded','true');renderQueue()}
+function closeQueue(){const panel=$('#queuePanel');panel.classList.remove('open');panel.setAttribute('aria-hidden','true');$('#queueBackdrop').classList.remove('open');$('#queueButton').setAttribute('aria-expanded','false');renderQueue()}
+function clearPlaybackQueue(){playbackQueue=[];playbackQueueExplicit=true;renderQueue();toast('Queue cleared','The current song will keep playing.')}
 function playTrackQueue(tracks,shuffle=false){
-  playbackQueue=tracks.filter(track=>!track.pending);
+  const nextQueue=tracks.filter(track=>!track.pending);if(!nextQueue.length){toast('No playable tracks');return}
+  playbackQueue=nextQueue;playbackQueueExplicit=true;
   if(shuffle){for(let index=playbackQueue.length-1;index>0;index--){const swap=Math.floor(Math.random()*(index+1));[playbackQueue[index],playbackQueue[swap]]=[playbackQueue[swap],playbackQueue[index]]}}
-  if(!playbackQueue.length){toast('No playable tracks');return}
   playTrack(playbackQueue[0],true);
 }
 function playTrack(track,preserveQueue=false){
   if(!track){toast('Nothing to play','Import music first.');return}
   if(track.pending){toast('Skipped pending track','Import the audio file to make this track playable.');return}
-  if(!preserveQueue)playbackQueue=[];
+  if(!preserveQueue){playbackQueue=[];playbackQueueExplicit=false}
   currentTrack=track;const a=albumById(track.albumId);$('#nowTitle').textContent=track.title;$('#nowArtist').textContent=`${track.artist} · ${track.album}`;$('#fullTitle').textContent=track.title;$('#fullArtist').textContent=`${track.artist} · ${track.album}`;
   $$('.now-cover').forEach(c=>{c.className=`now-cover ${a?.cover||'cover-8'}`;if(a?.customCover){c.style.backgroundImage=`url('${a.customCover}')`;c.style.backgroundSize='cover'}});
   updateFullscreenArtistBackdrop(track);
+  renderQueue();
   if(track.url){audio.src=track.url;audio.play().then(()=>setPlaying(true)).catch(()=>toast('Playback needs a click','Press play once to allow local audio.'));}else{simProgress=0;setRange($('#progress'),0);setPlaying(true)}
   if($('#fullscreenPlayer').classList.contains('open'))prepareTrackVideo(track);
 }
-function setPlaying(value){isPlaying=value;const name=value?'pause':'play';$('#playBtn').innerHTML=icon(name);$('#fullPlay').innerHTML=icon(name);clearInterval(simTimer);if(value&&!currentTrack.url){simTimer=setInterval(()=>{simProgress=(simProgress+.22)%100;setRange($('#progress'),simProgress);$('#elapsed').textContent=formatTime(simProgress*2.72)},1000)}}
+function setPlaying(value){isPlaying=value;const name=value?'pause':'play';$('#playBtn').innerHTML=icon(name);$('#fullPlay').innerHTML=icon(name);renderQueue();clearInterval(simTimer);if(value&&!currentTrack.url){simTimer=setInterval(()=>{simProgress=(simProgress+.22)%100;setRange($('#progress'),simProgress);$('#elapsed').textContent=formatTime(simProgress*2.72)},1000)}}
 function togglePlay(){if(!currentTrack){toast('Nothing to play','Import music first.');return}if(currentTrack.url){if(audio.paused)audio.play();else audio.pause()}else setPlaying(!isPlaying)}
 function formatTime(s){s=Math.floor(s);return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`}
-function nextTrack(dir=1){const tracks=playbackQueue.length?playbackQueue:allTracks().filter(t=>!t.pending);if(!tracks.length){toast('Nothing to play','Import music first.');return}const idx=currentTrack?tracks.findIndex(t=>t.id===currentTrack.id):-1;playTrack(tracks[(idx+dir+tracks.length)%tracks.length],Boolean(playbackQueue.length))}
+function nextTrack(dir=1){const tracks=effectivePlaybackQueue();if(!tracks.length){toast(playbackQueueExplicit?'Queue finished':'Nothing to play',playbackQueueExplicit?'Add songs or start another collection.':'Import music first.');return}const idx=currentTrack?tracks.findIndex(t=>t.id===currentTrack.id):-1,next=idx<0?(dir>=0?0:tracks.length-1):(idx+dir+tracks.length)%tracks.length;playTrack(tracks[next],playbackQueueExplicit)}
 
 function videoFromUrl(resource){
   if(!resource)return null;
@@ -1023,6 +1043,7 @@ $('#audioInput').onchange=e=>{const target=e.target.dataset.targetTrack?allTrack
 $('#folderInput').onchange=e=>{if(e.target.files.length){const entries=normalizeBrowserFiles(e.target.files),first=(entries[0].relativePath||'Imported folder').split('/')[0];importFolderEntries({name:first,entries})}e.target.value=''};
 $('#screenshotInput').onchange=e=>{if(e.target.files[0])screenshotWorkflow(e.target.files[0]);e.target.value=''};
 $('#playBtn').onclick=togglePlay;$('#fullPlay').onclick=togglePlay;$('#prevBtn').onclick=()=>nextTrack(-1);$('#nextBtn').onclick=()=>nextTrack(1);$('#fullscreenBtn').onclick=openFullscreen;$('#closeFull').onclick=closeFullscreen;
+$('#queueButton').onclick=()=>$('#queuePanel').classList.contains('open')?closeQueue():openQueue();$('#closeQueue').onclick=closeQueue;$('#queueBackdrop').onclick=closeQueue;$('#clearQueue').onclick=clearPlaybackQueue;
 audio.onplay=()=>setPlaying(true);audio.onpause=()=>setPlaying(false);audio.onended=()=>nextTrack(1);audio.ontimeupdate=()=>{if(!audio.duration)return;const p=audio.currentTime/audio.duration*100;setRange($('#progress'),p);$('#elapsed').textContent=formatTime(audio.currentTime);$('#duration').textContent=formatTime(audio.duration)};
 $('#progress').oninput=e=>{setRange(e.target,e.target.value);if(currentTrack?.url&&audio.duration)audio.currentTime=audio.duration*e.target.value/100;else simProgress=Number(e.target.value)};
 $('#volume').oninput=e=>{setRange(e.target,e.target.value);settings.volume=Number(e.target.value);audio.volume=settings.volume/100;saveLibrary()};
@@ -1037,7 +1058,7 @@ document.addEventListener('keydown',e=>{
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();$('#searchInput').focus()}
   if(e.code==='Space'&&!editing){e.preventDefault();togglePlay()}
   if((e.key==='Delete'||e.key==='Backspace')&&!editing&&(selectedTrackIds.size||selectedAlbumIds.size)){e.preventDefault();deleteBulkSelection();return}
-  if(e.key==='Escape'){hideContextMenu();if(modalLayer.classList.contains('open'))closeModal();else if($('#fullscreenPlayer').classList.contains('open'))closeFullscreen();else if(selectedTrackIds.size||selectedAlbumIds.size)clearBulkSelection()}
+  if(e.key==='Escape'){hideContextMenu();if(modalLayer.classList.contains('open'))closeModal();else if($('#fullscreenPlayer').classList.contains('open'))closeFullscreen();else if($('#queuePanel').classList.contains('open'))closeQueue();else if(selectedTrackIds.size||selectedAlbumIds.size)clearBulkSelection()}
 });
 
 initializePersistence();
