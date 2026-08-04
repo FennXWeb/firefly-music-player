@@ -14,6 +14,7 @@ Firefly is a local-first, highly customizable music player concept for Windows. 
 - Audio import for MP3, WAV, FLAC, M4A, AAC, OGG, and OPUS, with local playback.
 - Album, artist, and track editing, including cover and full-case artwork slots.
 - Metadata lookup flow with selectable artwork candidates.
+- Multi-source artist-image search across Wikimedia Commons, Deezer, and TheAudioDB, with offline local caching.
 - Album shelf mode with drag sorting and an animated, openable jewel case.
 - Fullscreen player with visualizer and generated-video queue states.
 - Nested master playlists, drag-to-group interactions, and smart playlists.

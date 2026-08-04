@@ -193,7 +193,9 @@ async function generateDynamicCaseArt(options = {}) {
 }
 async function cacheArtistImage(options = {}) {
   const source = new URL(options.url || '');
-  if (source.protocol !== 'https:' || !(source.hostname === 'wikimedia.org' || source.hostname.endsWith('.wikimedia.org'))) throw new Error('Only Wikimedia artist images can be downloaded by this lookup.');
+  const host = source.hostname.toLowerCase();
+  const allowed = host === 'wikimedia.org' || host.endsWith('.wikimedia.org') || host === 'cdn-images.dzcdn.net' || host === 'r2.theaudiodb.com' || host === 'theaudiodb.com' || host.endsWith('.theaudiodb.com');
+  if (source.protocol !== 'https:' || !allowed) throw new Error('This artist-image source is not trusted by Firefly.');
   const response = await net.fetch(source.href);
   if (!response.ok) throw new Error(`Artist image download failed (${response.status}).`);
   const contentType = response.headers.get('content-type')?.split(';')[0]?.toLowerCase() || '';
@@ -204,6 +206,37 @@ async function cacheArtistImage(options = {}) {
   const filePath = path.join(artistArtDirectory, `${safeFileStem(options.artist)}.${extension}`);
   await writeBufferAtomic(filePath, buffer);
   return { imageUrl: pathToFileURL(filePath).href, cachedAt: new Date().toISOString() };
+}
+async function fetchArtistJson(url) {
+  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 8500);
+  try {
+    const response = await net.fetch(url, { signal: controller.signal, headers: { Accept: 'application/json', 'User-Agent': `Firefly/${app.getVersion()}` } });
+    if (!response.ok) throw new Error(`Artist source returned ${response.status}.`);
+    return await response.json();
+  } finally { clearTimeout(timeout); }
+}
+function normalizedArtistName(value = '') { return String(value).normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/gi, ' ').trim().toLowerCase(); }
+async function searchSupplementalArtistImages(artist = '') {
+  artist = String(artist).trim().slice(0, 160);
+  if (!artist) return [];
+  const wanted = normalizedArtistName(artist);
+  const sources = await Promise.allSettled([
+    fetchArtistJson(`https://api.deezer.com/search/artist?q=${encodeURIComponent(artist)}&limit=8`).then(body => {
+      const ranked = (body?.data || []).map(item => ({ item, match: normalizedArtistName(item.name) === wanted ? 3 : normalizedArtistName(item.name).startsWith(wanted) ? 2 : normalizedArtistName(item.name).includes(wanted) ? 1 : 0 })).filter(entry => entry.match && entry.item.picture_xl && !/\/artist\/\/\d+x\d+/.test(entry.item.picture_xl)).sort((left, right) => right.match - left.match);
+      return ranked.slice(0, 3).map(({ item }) => ({ image: item.picture_xl || item.picture_big, sourceUrl: item.link || `https://www.deezer.com/artist/${item.id}`, sourceLabel: 'Deezer', label: item.name || artist, description: 'Official music-service artist portrait' }));
+    }),
+    fetchArtistJson(`https://www.theaudiodb.com/api/v1/json/123/search.php?s=${encodeURIComponent(artist)}`).then(body => {
+      const matches = (body?.artists || []).filter(item => normalizedArtistName(item.strArtist) === wanted).slice(0, 2), results = [];
+      for (const item of matches) {
+        const sourceUrl = `https://www.theaudiodb.com/artist/${item.idArtist}`;
+        if (item.strArtistThumb) results.push({ image: item.strArtistThumb, sourceUrl, sourceLabel: 'TheAudioDB', label: item.strArtist || artist, description: 'Artist portrait' });
+        if (item.strArtistFanart) results.push({ image: item.strArtistFanart, sourceUrl, sourceLabel: 'TheAudioDB', label: item.strArtist || artist, description: 'Artist fan artwork' });
+        if (item.strArtistWideThumb) results.push({ image: item.strArtistWideThumb, sourceUrl, sourceLabel: 'TheAudioDB', label: item.strArtist || artist, description: 'Wide artist photograph' });
+      }
+      return results.slice(0, 6);
+    })
+  ]);
+  return sources.flatMap(result => result.status === 'fulfilled' ? result.value : []);
 }
 async function apiPassRequest(resource, options = {}) {
   const savedCredentials = await readJson(credentialsPath, {});
@@ -461,6 +494,7 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('dynamic-case:ensure-fonts', async () => ensureDynamicFontLibrary());
   ipcMain.handle('dynamic-case:generate', async (_event, options) => generateDynamicCaseArt(options));
+  ipcMain.handle('artist:image-search', async (_event, artist) => searchSupplementalArtistImages(artist));
   ipcMain.handle('artist:image-cache', async (_event, options) => cacheArtistImage(options));
   ipcMain.handle('suno:test', async () => testSunoConnection());
   ipcMain.handle('suno:create', async (_event, options) => createSunoTask(options));
