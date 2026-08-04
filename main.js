@@ -255,6 +255,44 @@ async function searchSupplementalArtistImages(artist = '') {
   ]);
   return sources.flatMap(result => result.status === 'fulfilled' ? result.value : []);
 }
+function youtubeText(value={}){return String(value?.simpleText||value?.runs?.map(run=>run?.text||'').join('')||'').trim()}
+function extractAssignedJson(source='',variable='ytInitialData'){
+  const match=new RegExp(`(?:var\\s+)?${variable}\\s*=\\s*`).exec(source);if(!match)return null;
+  const start=source.indexOf('{',match.index+match[0].length);if(start<0)return null;
+  let depth=0,inString=false,escaped=false;
+  for(let index=start;index<source.length;index++){
+    const character=source[index];
+    if(inString){if(escaped)escaped=false;else if(character==='\\')escaped=true;else if(character==='"')inString=false;continue}
+    if(character==='"'){inString=true;continue}if(character==='{')depth++;else if(character==='}'&&--depth===0){try{return JSON.parse(source.slice(start,index+1))}catch{return null}}
+  }
+  return null;
+}
+function youtubeVideoResults(initialData){
+  const results=[];
+  const visit=(value,depth=0)=>{if(!value||depth>35)return;if(Array.isArray(value)){value.forEach(item=>visit(item,depth+1));return}if(typeof value!=='object')return;
+    const item=value.videoRenderer;
+    if(item?.videoId&&/^[A-Za-z0-9_-]{11}$/.test(item.videoId)){
+      const badgeText=[...(item.ownerBadges||[]),...(item.badges||[])].map(badge=>badge?.metadataBadgeRenderer?.tooltip||badge?.metadataBadgeRenderer?.label||'').filter(Boolean),overlays=(item.thumbnailOverlays||[]).map(overlay=>youtubeText(overlay?.thumbnailOverlayTimeStatusRenderer?.text)).filter(Boolean);
+      results.push({videoId:item.videoId,title:youtubeText(item.title),channel:youtubeText(item.ownerText)||youtubeText(item.longBylineText)||youtubeText(item.shortBylineText),duration:youtubeText(item.lengthText)||overlays[0]||'',published:youtubeText(item.publishedTimeText),views:youtubeText(item.viewCountText),badges:badgeText,thumbnail:item.thumbnail?.thumbnails?.at(-1)?.url||'',sourceUrl:`https://www.youtube.com/watch?v=${item.videoId}`});return
+    }
+    Object.values(value).forEach(child=>visit(child,depth+1));
+  };visit(initialData);return results;
+}
+function cleanVideoSearchTerm(value=''){return String(value).replace(/\s*[\[(](?:\d{4}\s+)?(?:re-?master(?:ed)?|deluxe|expanded|anniversary|explicit|clean|stereo|mono|radio edit|album version)[^\])]*[\])]/gi,' ').replace(/\s+/g,' ').trim()}
+async function fetchYouTubeSearch(query=''){
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),12000);
+  try{
+    const url=`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&hl=en&gl=US`,response=await net.fetch(url,{signal:controller.signal,headers:{'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/137 Safari/537.36','Accept-Language':'en-US,en;q=0.9'}});
+    if(!response.ok)throw new Error(`YouTube search returned ${response.status}.`);const html=await response.text(),initialData=extractAssignedJson(html);if(!initialData)throw new Error('YouTube search results could not be read.');return youtubeVideoResults(initialData);
+  }finally{clearTimeout(timeout)}
+}
+async function searchYouTubeMusicVideos(options={}){
+  const title=String(options.title||'').trim().slice(0,220),artist=String(options.artist||'').trim().slice(0,180);if(!title||!artist)return[];
+  const cleanTitle=cleanVideoSearchTerm(title),leadArtist=artist.split(/\s+(?:feat(?:uring)?|ft\.?|with)\s+/i)[0].trim()||artist;
+  const queries=[`${artist} ${title} official music video`,`${leadArtist} ${cleanTitle} official video`,`${artist} ${cleanTitle} music video`].filter((query,index,array)=>query.trim()&&array.indexOf(query)===index);
+  const searches=await Promise.allSettled(queries.map(fetchYouTubeSearch));if(searches.every(result=>result.status==='rejected'))throw new Error(searches[0].reason?.message||'YouTube search is unavailable.');
+  const seen=new Set(),results=[];searches.forEach((search,queryIndex)=>{if(search.status!=='fulfilled')return;search.value.forEach((video,resultIndex)=>{if(seen.has(video.videoId))return;seen.add(video.videoId);results.push({...video,query:queries[queryIndex],queryIndex,resultIndex})})});return results.slice(0,45);
+}
 async function apiPassRequest(resource, options = {}) {
   const savedCredentials = await readJson(credentialsPath, {});
   const apiKey = decryptSecret(savedCredentials.sunoToken);
@@ -659,6 +697,7 @@ app.whenReady().then(() => {
   ipcMain.handle('dynamic-case:generate', async (_event, options) => generateDynamicCaseArt(options));
   ipcMain.handle('artist:image-search', async (_event, artist) => searchSupplementalArtistImages(artist));
   ipcMain.handle('artist:image-cache', async (_event, options) => cacheArtistImage(options));
+  ipcMain.handle('video:search-youtube', async (_event, options) => searchYouTubeMusicVideos(options));
   ipcMain.handle('lyrics:lookup', async (_event, options) => lookupLyrics(options));
   ipcMain.handle('suno:test', async () => testSunoConnection());
   ipcMain.handle('suno:create', async (_event, options) => createSunoTask(options));

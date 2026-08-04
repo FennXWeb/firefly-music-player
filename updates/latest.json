@@ -3,7 +3,7 @@
   "branch": "beta",
   "version": "0.1.25",
   "publishedAt": "2026-08-04T04:28:55.8026046Z",
-  "notes": "Added persistent Live Folders to the Import Music menu. Firefly now watches selected folders for new, changed, moved, and deleted music, performs periodic recovery scans, imports metadata and artwork, keeps user customizations intact, and safely retains tracks while a folder or external drive is offline.",
+  "notes": "Greatly improved existing music-video discovery with direct multi-query YouTube search, metadata normalization, official artist and VEVO ranking, duration-aware matching, strict filtering for covers, reactions, lyric videos, audio-only uploads, remixes, and live performances, plus a Try Another Result fallback. Earlier negative and pending-AI searches are automatically retried with the new finder.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.25/Firefly-0.1.25-Setup.exe",
   "sha256": "9C2CC00F5F9036ECEDE806BB98F8A83C4D6598D12203BD7883F561FBEAF5D410"
 }
