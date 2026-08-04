@@ -60,11 +60,16 @@ let updateState = { status:'idle', channel:'stable', available:false, progress:n
 let updateCheckTimer = null;
 let volumePersistenceTimer = null;
 let dynamicDefaultQueue = Promise.resolve();
+let libraryRevision = 0;
+let renderedLibraryRevision = 0;
+let dynamicViewRefreshTimer = null;
 const VIDEO_RECHECK_MS = 14 * 24 * 60 * 60 * 1000;
 
 const view = $('#view');
 const audio = $('#audio');
 const modalLayer = $('#modalLayer');
+document.documentElement.classList.toggle('windows-app',window.firefly?.platform==='win32');
+new MutationObserver(()=>{renderedLibraryRevision=libraryRevision}).observe(view,{childList:true});
 
 function allTracks() { return albums.flatMap(a => a.tracks); }
 function albumById(id) { return albums.find(a => a.id === id); }
@@ -144,6 +149,7 @@ function runBulkAction(action){
 function saveLibrary() {
   pruneEmptyAlbums();
   syncShelves();
+  libraryRevision++;
   const state = { albums, playlists:customPlaylists, shelves, artistProfiles, sunoConnected, sunoJobs, playHistory, settings };
   try { localStorage.setItem('firefly-library-v1', JSON.stringify(state)); }
   catch { toast('Library is too large to cache','Your current session is safe, but large uploaded artwork may not persist.'); }
@@ -152,6 +158,24 @@ function saveLibrary() {
     persistenceTimer = setTimeout(() => window.firefly.saveState(state).catch(() => toast('Could not save library','Firefly will retry after the next change.')), 120);
   }
   renderSidebarPlaylists();
+  scheduleDynamicViewRefresh();
+}
+function scheduleDynamicViewRefresh(delay=90) {
+  const targetRevision=libraryRevision;clearTimeout(dynamicViewRefreshTimer);
+  dynamicViewRefreshTimer=setTimeout(()=>{
+    if(renderedLibraryRevision>=targetRevision)return;
+    const active=document.activeElement,editing=active&&view.contains(active)&&['INPUT','TEXTAREA','SELECT'].includes(active.tagName);
+    if(editing){scheduleDynamicViewRefresh(350);return}
+    const content=$('#content'),scrollTop=content?.scrollTop||0;
+    render();
+    requestAnimationFrame(()=>{if(content)content.scrollTop=scrollTop});
+  },delay);
+}
+function refreshLibraryView({preserveScroll=true}={}) {
+  clearTimeout(dynamicViewRefreshTimer);
+  const content=$('#content'),scrollTop=content?.scrollTop||0;
+  render();
+  if(preserveScroll)requestAnimationFrame(()=>{if(content)content.scrollTop=scrollTop});
 }
 function saveCredentials() {
   if (persistenceReady && window.firefly?.saveCredentials) return window.firefly.saveCredentials(credentials).catch(() => { toast('Could not save connection credentials'); return false; });
@@ -295,6 +319,8 @@ function pageHead(eyebrow, title, description, tools = '') {
 }
 
 function render() {
+  // Only the replaceable library view is rebuilt. The audio element, transport,
+  // active queue, and playback clock live outside it and continue uninterrupted.
   renderSidebarPlaylists();
   view.style.animation = 'none';
   requestAnimationFrame(() => { view.style.animation = ''; });
@@ -313,6 +339,7 @@ function render() {
   $('#songCount').textContent = allTracks().length;
   updateHistoryControls();
   applySelectionClasses();renderBulkSelectionBar();renderQueue();
+  renderedLibraryRevision=libraryRevision;
 }
 
 function albumCover(a, extra = '') {
@@ -493,12 +520,29 @@ function renderArtists(filter = '') {
 
 function openAlbumDetail(id){navigate(`album:${encodeURIComponent(id)}`)}
 function openArtistDetail(name){navigate(`artist:${encodeURIComponent(name)}`)}
+const albumDetailPalettes=[['#7b3457','#e76c58'],['#213a66','#6e65d9'],['#174b49','#5cc3a5'],['#5c3425','#d89358'],['#3d315f','#ca6eac'],['#353535','#a49078']];
+function albumDetailFallbackPalette(album){return albumDetailPalettes[playlistCoverHash(album.id||album.title)%albumDetailPalettes.length]}
+async function applyAlbumDetailTheme(album){
+  const root=$(`.album-detail[data-album="${CSS.escape(album.id)}"]`,view);if(!root)return;
+  const source=album.customCover||album.fullArtParts?.front||'';if(!source)return;
+  try{
+    const image=await new Promise((resolve,reject)=>{const element=new Image();if(/^https?:/i.test(source))element.crossOrigin='anonymous';element.onload=()=>resolve(element);element.onerror=reject;element.src=source});
+    const canvas=document.createElement('canvas');canvas.width=48;canvas.height=48;const context=canvas.getContext('2d',{willReadFrequently:true});context.drawImage(image,0,0,48,48);
+    const pixels=context.getImageData(0,0,48,48).data,buckets=new Map();
+    for(let index=0;index<pixels.length;index+=16){if(pixels[index+3]<180)continue;const r=pixels[index],g=pixels[index+1],b=pixels[index+2],max=Math.max(r,g,b),min=Math.min(r,g,b),light=(max+min)/510,sat=max===min?0:(max-min)/(255-Math.abs(max+min-255));if(light<.08||light>.9)continue;const key=[r,g,b].map(value=>Math.round(value/32)*32).join(',');buckets.set(key,(buckets.get(key)||0)+.5+sat*2)}
+    const colors=[...buckets].sort((a,b)=>b[1]-a[1]).map(([key])=>key.split(',').map(Number));if(!colors.length)return;
+    const primary=colors[0],secondary=colors.find(color=>Math.hypot(color[0]-primary[0],color[1]-primary[1],color[2]-primary[2])>105)||colors[1]||primary;
+    const toHex=color=>`#${color.map(value=>Math.max(0,Math.min(255,value)).toString(16).padStart(2,'0')).join('')}`;root.style.setProperty('--album-primary',toHex(primary));root.style.setProperty('--album-secondary',toHex(secondary));
+  }catch{/* The fallback palette still styles remote art that blocks canvas sampling. */}
+}
 function renderAlbumDetail(id){
   const album=albumById(id);if(!album){navigate('albums',{record:false});return}
   const isOpen=openedAlbumCases.has(id),dynamic=dynamicCaseReady(album)?album.dynamicCaseArt:null;
-  const backArt=dynamic?.backgroundUrl||album.fullArtParts?.back||album.customFullArt||album.customCover||'';
-  const discArt=album.customCover||'';
-  view.innerHTML=`<section class="entity-detail album-detail" data-album="${album.id}"><button class="detail-back" data-detail-back>${icon('prev')} All albums</button><div class="album-detail-hero"><div class="detail-case-stage"><button class="album-detail-case ${isOpen?'open':''}" data-detail-case aria-expanded="${isOpen}" aria-label="${isOpen?'Close':'Open'} ${esc(album.title)} jewel case"><span class="album-detail-case-back" ${backArt?`style="background-image:linear-gradient(#08080830,#08080830),url(&quot;${esc(backArt)}&quot;)"`:''}>${dynamic?`<span class="detail-back-copy" style="font-family:'${dynamicFontName(dynamic.font)}'">${dynamicTrackList(album)}</span>`:''}<i class="detail-disc" ${discArt?`style="--detail-disc:url(&quot;${esc(discArt)}&quot;)"`:''}></i></span><span class="album-detail-lid"><span class="detail-lid-front">${albumCover(album,'detail-cover')}</span><span class="detail-lid-inside"><b>${esc(album.title)}</b><small>${esc(album.artist)} · ${album.year}</small><ol>${album.tracks.slice(0,18).map(t=>`<li>${esc(t.title)}</li>`).join('')}</ol></span></span></button><p class="case-toggle-hint">Click the jewel case to ${isOpen?'close':'open'} it</p></div><div class="album-detail-copy"><div class="eyebrow">ALBUM · ${esc(album.genre||'UNCATEGORIZED')}</div><h1>${esc(album.title)}</h1><button class="artist-byline" data-open-artist="${esc(album.artist)}">${esc(album.artist)}</button><p>${album.year} · ${album.tracks.length} track${album.tracks.length===1?'':'s'} · ${album.tracks.reduce((sum,t)=>sum+(parseInt(t.duration)||0),0)}+ minutes</p><div class="detail-actions"><button class="primary" data-detail-play>${icon('play')} Play album</button><button class="ghost" data-detail-shuffle>${icon('shuffle')} Shuffle</button><button class="ghost" data-detail-add-playlist>${icon('playlist')} Add to playlist</button><button class="icon-button" data-detail-edit title="Edit album">${icon('settings')}</button></div></div></div><div class="detail-track-section"><div><div class="eyebrow">TRACK LIST</div><h2>On this album</h2></div>${songTable(album.tracks)}</div></section>`;
+  const backArt=album.fullArtParts?.back||album.customFullArt||dynamic?.backgroundUrl||album.customCover||'';
+  const discArt=album.customCover||album.fullArtParts?.front||'';
+  const themeArt=album.customCover||album.fullArtParts?.front||'',palette=albumDetailFallbackPalette(album),themeStyle=`--album-primary:${palette[0]};--album-secondary:${palette[1]};${themeArt?`--album-art:url(&quot;${esc(themeArt)}&quot;);`:''}`;
+  view.innerHTML=`<section class="entity-detail album-detail ${themeArt?'has-album-art-theme':'generated-album-theme'}" data-album="${album.id}" style="${themeStyle}"><span class="album-detail-atmosphere" aria-hidden="true"></span><button class="detail-back" data-detail-back>${icon('prev')} All albums</button><div class="album-detail-hero"><div class="detail-case-stage"><button class="album-detail-case ${isOpen?'open':''}" data-detail-case aria-expanded="${isOpen}" aria-label="${isOpen?'Close':'Open'} ${esc(album.title)} jewel case"><span class="album-detail-case-back" ${backArt?`style="background-image:linear-gradient(#08080830,#08080830),url(&quot;${esc(backArt)}&quot;)"`:''}>${dynamic?`<span class="detail-back-copy" style="font-family:'${dynamicFontName(dynamic.font)}'">${dynamicTrackList(album)}</span>`:''}<i class="detail-disc" ${discArt?`style="--detail-disc:url(&quot;${esc(discArt)}&quot;)"`:''}></i></span><span class="album-detail-lid"><span class="detail-lid-front">${albumCover(album,'detail-cover')}</span><span class="detail-lid-inside"><b>${esc(album.title)}</b><small>${esc(album.artist)} · ${album.year}</small><ol>${album.tracks.slice(0,18).map(t=>`<li>${esc(t.title)}</li>`).join('')}</ol></span></span></button><p class="case-toggle-hint">Click the jewel case to ${isOpen?'close':'open'} it</p></div><div class="album-detail-copy"><div class="eyebrow">ALBUM · ${esc(album.genre||'UNCATEGORIZED')}</div><h1>${esc(album.title)}</h1><button class="artist-byline" data-open-artist="${esc(album.artist)}">${esc(album.artist)}</button><p>${album.year} · ${album.tracks.length} track${album.tracks.length===1?'':'s'} · ${album.tracks.reduce((sum,t)=>sum+(parseInt(t.duration)||0),0)}+ minutes</p><div class="detail-actions"><button class="primary" data-detail-play>${icon('play')} Play album</button><button class="ghost" data-detail-shuffle>${icon('shuffle')} Shuffle</button><button class="ghost" data-detail-add-playlist>${icon('playlist')} Add to playlist</button><button class="icon-button" data-detail-edit title="Edit album">${icon('settings')}</button></div></div></div><div class="detail-track-section album-themed-tracklist"><div><div class="eyebrow">TRACK LIST</div><h2>On this album</h2></div>${songTable(album.tracks)}</div></section>`;
+  applyAlbumDetailTheme(album);
   $('[data-detail-back]').onclick=()=>navigate('albums');
   $('[data-open-artist]').onclick=()=>openArtistDetail(album.artist);
   $('[data-detail-case]').onclick=()=>{openedAlbumCases.has(id)?openedAlbumCases.delete(id):openedAlbumCases.add(id);const caseElement=$('[data-detail-case]'),opened=openedAlbumCases.has(id);caseElement.classList.toggle('open',opened);caseElement.setAttribute('aria-expanded',String(opened));caseElement.setAttribute('aria-label',`${opened?'Close':'Open'} ${album.title} jewel case`);$('.case-toggle-hint').textContent=`Click the jewel case to ${opened?'close':'open'} it`};
@@ -672,6 +716,7 @@ function albumContext(id,x,y) {
   showContextMenu([
     {label:'Open album',icon:'albums',action:()=>openAlbumDetail(id)},
     {label:'Play album',icon:'play',action:()=>playTrackQueue(album.tracks)},
+    {label:'Play next',icon:'next',action:()=>queueTracksNext(album.tracks,album.title)},
     {label:'Add album to playlist',icon:'playlist',action:()=>addAlbumToPlaylist(album)},
     {label:'Edit album',icon:'settings',action:()=>editAlbum(id)},
     {label:'Pull metadata & art',icon:'spark',action:()=>metadataLookup(album)},
@@ -744,10 +789,24 @@ function addTrackToPlaylist(track) {
 function trackContext(track,x,y) {
   showContextMenu([
     {label:'Play',icon:'play',action:()=>playTrack(track)},
+    {label:'Play next',icon:'next',action:()=>queueTracksNext([track],track.title)},
     {label:'Add to playlist',icon:'playlist',action:()=>addTrackToPlaylist(track)},
     {label:'Edit track',icon:'settings',action:()=>showTrackMenu(track)},
     {separator:true},
     {label:'Remove from library',icon:'close',danger:true,action:()=>confirmRemove('Remove track?',`“${track.title}” will be removed from Firefly. The source file stays untouched.`,()=>{const album=albumById(track.albumId);if(album)album.tracks=album.tracks.filter(t=>t.id!==track.id);customPlaylists.forEach(p=>removePlaylistTrackReferences(p,new Set([track.id])));albums=albums.filter(a=>a.tracks.length||a.id!=='loose-files');saveLibrary();render();toast('Track removed')})}
+  ],x,y);
+}
+
+function nowPlayingContext(x,y) {
+  if(!currentTrack){toast('Nothing is playing');return}
+  const album=albumById(currentTrack.albumId);
+  showContextMenu([
+    {label:'Add to playlist',icon:'playlist',action:()=>addTrackToPlaylist(currentTrack)},
+    ...(album?[{label:'Open album',icon:'albums',action:()=>openAlbumDetail(album.id)}]:[]),
+    {label:'Open artist',icon:'artist',action:()=>openArtistDetail(currentTrack.artist)},
+    {label:'Edit track',icon:'settings',action:()=>showTrackMenu(currentTrack)},
+    {separator:true},
+    {label:'View queue',icon:'list',action:openQueue}
   ],x,y);
 }
 
@@ -854,14 +913,17 @@ function spineArtworkStyle(image,mode='separate'){
 function shelfAlbumMarkup(album,shelfId){
   const dynamic=dynamicCaseReady(album)?album.dynamicCaseArt:null;
   const scannedSpine=album.fullArtParts?.spine;
-  const manualSpine=!album.fullArtParts&&album.customFullArt;
-  const hasSpine=Boolean(dynamic||scannedSpine||manualSpine);
-  const spineStyle=dynamic
-    ? `${spineArtworkStyle(dynamic.backgroundUrl,'dynamic')}font-family:'${dynamicFontName(dynamic.font)}';`
-    : scannedSpine
+  const spreadArt=album.customFullArt&&(!album.fullArtParts||album.fullArtParts.spineMode==='full-spread')?album.customFullArt:null;
+  const textureArt=album.fullArtParts?.back||album.customFullArt||album.customCover||null;
+  const textureUrl=textureArt?String(textureArt).replace(/['\\]/g,'\\$&'):'';
+  const source=scannedSpine?'scanned':spreadArt?'spread':dynamic?'dynamic':textureArt?'texture':'text';
+  const spineStyle=scannedSpine
     ? spineArtworkStyle(scannedSpine,album.fullArtParts.spineMode||'separate')
-    : (manualSpine?spineArtworkStyle(album.customFullArt,'full-spread'):'');
-  return `<div draggable="true" class="shelf-album ${dynamic?'dynamic-shelf-spine':hasSpine?'has-real-spine':'auto-spine'}" data-shelf-album="${album.id}" data-parent-shelf="${shelfId}" style="${spineStyle}">${dynamic||!hasSpine?`${esc(album.artist)} - ${esc(album.title)}`:''}</div>`;
+    : spreadArt?spineArtworkStyle(spreadArt,'full-spread')
+    : dynamic?`${spineArtworkStyle(dynamic.backgroundUrl,'dynamic')}font-family:'${dynamicFontName(dynamic.font)}';`
+    : textureArt?`background-image:linear-gradient(90deg,#08080899,#08080835,#080808aa),url('${textureUrl}');background-size:auto 100%,cover;background-position:center;background-repeat:no-repeat;`:'';
+  const showText=['dynamic','texture','text'].includes(source);
+  return `<div draggable="true" class="shelf-album shelf-spine-${source} ${showText?'artwork-text-spine':'has-real-spine'}" data-shelf-album="${album.id}" data-parent-shelf="${shelfId}" data-spine-source="${source}" style="${spineStyle}">${showText?`${esc(album.artist)} - ${esc(album.title)}`:''}</div>`;
 }
 
 function renderShelf() {
@@ -1099,7 +1161,7 @@ function importFolderEntries(folder) {
     const album=applyNewAlbumDefaults({id,title,artist,year:mostCommon(tracks.map(t=>t.metadata?.year))||new Date().getFullYear(),genre:mostCommon(tracks.map(t=>t.metadata?.genre))||'Imported',cover:(preferred||embeddedArt)?'':'cover-8',customCover:preferred?.url||embeddedArt||null,fullArt:null,tracks:[]});
     album.tracks=tracks.map((entry,index)=>makeTrack(entry,album,index)).sort((a,b)=>(a.discNumber||1)-(b.discNumber||1)||(a.trackNumber||999)-(b.trackNumber||999));albums.push(album);queueDefaultDynamicCase(album);albumCount++;
   });
-  saveLibrary();navigate('albums');toast('Folder imported',`${albumCount} album${albumCount===1?'':'s'} · ${looseCount} loose track${looseCount===1?'':'s'}`);
+  saveLibrary();navigate('albums');toast(folder.source==='zip'?'ZIP imported':'Folder imported',`${albumCount} album${albumCount===1?'':'s'} · ${looseCount} loose track${looseCount===1?'':'s'}`);
 }
 
 async function chooseFiles(targetTrackId=null){
@@ -1110,7 +1172,11 @@ async function chooseFolder(){
   if(window.firefly?.chooseMusicFolder){const folder=await window.firefly.chooseMusicFolder();if(folder)importFolderEntries(folder)}
   else $('#folderInput').click();
 }
-function showImportMenu(){const rect=$('#importTrigger').getBoundingClientRect();showContextMenu([{label:'Import music files',icon:'song',action:()=>chooseFiles()},{label:'Import a folder',icon:'albums',action:chooseFolder}],rect.right-205,rect.bottom+7)}
+async function chooseZip(){
+  if(!window.firefly?.chooseMusicZip){toast('ZIP import is available in the Windows app');return}
+  try{const archive=await window.firefly.chooseMusicZip();if(archive)importFolderEntries(archive)}catch(error){toast('Could not import ZIP',error?.message||'The archive may be damaged or encrypted.')}
+}
+function showImportMenu(){const rect=$('#importTrigger').getBoundingClientRect();showContextMenu([{label:'Import music files',icon:'song',action:()=>chooseFiles()},{label:'Import a folder',icon:'albums',action:chooseFolder},{label:'Import a ZIP archive',icon:'upload',action:chooseZip}],rect.right-205,rect.bottom+7)}
 
 function showTrackMenu(track){
   if(track.pending){openModal(`<div class="modal-head"><h2>Pending track</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><p style="color:#888">${esc(track.title)} by ${esc(track.artist)} is in the playlist but not in your library. Import the matching audio file to activate it and auto-tag its metadata.</p></div><div class="modal-actions"><button class="ghost close-modal">Cancel</button><button class="primary" id="importPending">${icon('upload')} Import audio</button></div>`,true);$('#importPending').onclick=()=>{closeModal();chooseFiles(track.id)};return}
@@ -1133,6 +1199,15 @@ function showTrackMenu(track){
 
 function effectivePlaybackQueue(){return playbackQueueExplicit?playbackQueue:(currentTrack?allTracks().filter(track=>!track.pending):[])}
 function materializePlaybackQueue(){if(!playbackQueueExplicit){playbackQueue=effectivePlaybackQueue();playbackOriginalQueue=[...playbackQueue];playbackQueueExplicit=true}}
+function queueTracksNext(tracks,label='Selection'){
+  const unique=[...new Map((tracks||[]).filter(track=>track&&!track.pending&&track.id!==currentTrack?.id).map(track=>[track.id,track])).values()];
+  if(!unique.length){toast('Nothing new to queue',currentTrack?'The current track is already playing.':'No playable tracks were selected.');return}
+  if(!currentTrack){playbackQueue=[...unique];playbackOriginalQueue=[...unique];playbackQueueExplicit=true;renderQueue();toast('Added to queue',`${label} will play when playback starts.`);return}
+  materializePlaybackQueue();
+  if(!playbackQueue.some(track=>track.id===currentTrack.id))playbackQueue.unshift(currentTrack);
+  const queuedIds=new Set(unique.map(track=>track.id));playbackQueue=playbackQueue.filter(track=>!queuedIds.has(track.id));
+  const currentIndex=Math.max(0,playbackQueue.findIndex(track=>track.id===currentTrack.id));playbackQueue.splice(currentIndex+1,0,...unique);playbackOriginalQueue=[...playbackQueue];playbackQueueExplicit=true;renderQueue();toast('Playing next',`${label} · ${unique.length} track${unique.length===1?'':'s'}`);
+}
 function shuffledTracks(tracks){const shuffled=[...tracks];for(let index=shuffled.length-1;index>0;index--){const swap=Math.floor(Math.random()*(index+1));[shuffled[index],shuffled[swap]]=[shuffled[swap],shuffled[index]]}return shuffled}
 function updatePlaybackModeControls(){
   const shuffle=$('#shuffleBtn'),repeat=$('#repeatBtn');if(!shuffle||!repeat)return;
@@ -1374,6 +1449,7 @@ document.addEventListener('click',e=>{
   const rowAction=e.target.closest('[data-row-action]');if(rowAction){const t=allTracks().find(x=>x.id===rowAction.dataset.rowAction),rect=rowAction.getBoundingClientRect();if(t)trackContext(t,rect.right-205,rect.bottom+4)}
 });
 document.addEventListener('contextmenu',e=>{
+  const nowPlaying=e.target.closest('.now-playing');if(nowPlaying){e.preventDefault();nowPlayingContext(e.clientX,e.clientY);return}
   const playlist=e.target.closest('[data-playlist-card],[data-sidebar-playlist]');if(playlist){e.preventDefault();playlistContext(playlist.dataset.playlistCard||playlist.dataset.sidebarPlaylist,e.clientX,e.clientY);return}
   const row=e.target.closest('[data-track]');if(row){e.preventDefault();const t=allTracks().find(x=>x.id===row.dataset.track);if(t)trackContext(t,e.clientX,e.clientY);return}
   const artist=e.target.closest('[data-artist]');if(artist){e.preventDefault();artistContext(artist.dataset.artist,e.clientX,e.clientY);return}

@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs/promises');
 const crypto = require('crypto');
 const { pathToFileURL, fileURLToPath } = require('url');
+const AdmZip = require('adm-zip');
 
 // Keep user content completely separate from the portable executable and its
 // temporary extraction directory. This path is stable across Firefly upgrades.
@@ -19,6 +20,7 @@ const dynamicArtDirectory = path.join(dataDirectory, 'dynamic-case-art');
 const artistArtDirectory = path.join(dataDirectory, 'artist-art');
 const sunoDirectory = path.join(dataDirectory, 'suno');
 const updatesDirectory = path.join(dataDirectory, 'updates');
+const zipImportDirectory = path.join(dataDirectory, 'zip-imports');
 const apiPassBaseUrl = 'https://api.apipass.dev';
 const updateRepository = 'FennXWeb/firefly-music-player';
 const updateBranches = { stable: 'main', beta: 'beta' };
@@ -468,6 +470,29 @@ async function scanFolder(root) {
   return results;
 }
 
+async function importZipArchive(archivePath) {
+  const archive=new AdmZip(archivePath),entries=archive.getEntries();
+  const usable=entries.filter(entry=>!entry.isDirectory&&(audioExtensions.has(path.extname(entry.entryName).toLowerCase())||imageExtensions.has(path.extname(entry.entryName).toLowerCase())));
+  if(!usable.length)throw new Error('This ZIP does not contain supported music files.');
+  if(usable.some(entry=>(Number(entry.header?.size)||0)>2*1024*1024*1024))throw new Error('A file inside this ZIP exceeds Firefly’s 2 GB per-file import limit.');
+  const totalBytes=usable.reduce((sum,entry)=>sum+(Number(entry.header?.size)||0),0);
+  if(totalBytes>8*1024*1024*1024)throw new Error('This ZIP expands beyond Firefly’s 8 GB import limit.');
+  const archiveName=path.basename(archivePath,path.extname(archivePath));
+  const safeName=archiveName.replace(/[^a-z0-9._-]+/gi,'-').replace(/^-+|-+$/g,'').slice(0,70)||'music';
+  const root=path.join(zipImportDirectory,`${safeName}-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`);
+  await fs.mkdir(root,{recursive:true});
+  for(const entry of usable){
+    const normalized=path.posix.normalize(String(entry.entryName).replaceAll('\\','/')).replace(/^\/+/, '');
+    if(!normalized||normalized==='.'||normalized.startsWith('../')||normalized.includes('/../'))continue;
+    const destination=path.resolve(root,...normalized.split('/'));
+    if(destination!==root&&!destination.startsWith(`${path.resolve(root)}${path.sep}`))continue;
+    await writeBufferAtomic(destination,entry.getData());
+  }
+  const imported=await scanFolder(root);
+  if(!imported.some(entry=>entry.kind==='audio'))throw new Error('No supported music could be extracted from this ZIP.');
+  return {root,name:archiveName,entries:imported,source:'zip',archiveName:path.basename(archivePath)};
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1500,
@@ -543,6 +568,11 @@ app.whenReady().then(() => {
     if (result.canceled || !result.filePaths[0]) return null;
     const root = result.filePaths[0];
     return { root, name: path.basename(root), entries: await scanFolder(root) };
+  });
+  ipcMain.handle('library:choose-zip', async () => {
+    const result=await dialog.showOpenDialog({title:'Import music from ZIP',properties:['openFile'],filters:[{name:'ZIP archives',extensions:['zip']}]});
+    if(result.canceled||!result.filePaths[0])return null;
+    return importZipArchive(result.filePaths[0]);
   });
   ipcMain.handle('dynamic-case:ensure-fonts', async () => ensureDynamicFontLibrary());
   ipcMain.handle('dynamic-case:generate', async (_event, options) => generateDynamicCaseArt(options));

@@ -1,6 +1,6 @@
 {
   "name": "firefly-music",
-  "version": "0.1.22",
+  "version": "0.1.23",
   "private": true,
   "description": "A highly customizable, local-first music player for Windows.",
   "author": "Firefly",
@@ -60,6 +60,7 @@
     }
   },
   "dependencies": {
+    "adm-zip": "^0.6.0",
     "music-metadata": "^11.14.0"
   }
 }

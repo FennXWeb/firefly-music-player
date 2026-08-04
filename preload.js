@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('firefly', {
   chooseMusicFiles: () => ipcRenderer.invoke('library:choose-files'),
   chooseMusicFolder: () => ipcRenderer.invoke('library:choose-folder'),
+  chooseMusicZip: () => ipcRenderer.invoke('library:choose-zip'),
   loadState: () => ipcRenderer.invoke('state:load'),
   saveState: state => ipcRenderer.invoke('state:save', state),
   loadCredentials: () => ipcRenderer.invoke('credentials:load'),
