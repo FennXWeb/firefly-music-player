@@ -17,7 +17,9 @@ const fontDirectory = path.join(dataDirectory, 'fonts');
 const fontManifestPath = path.join(fontDirectory, 'manifest.json');
 const dynamicArtDirectory = path.join(dataDirectory, 'dynamic-case-art');
 const artistArtDirectory = path.join(dataDirectory, 'artist-art');
+const sunoDirectory = path.join(dataDirectory, 'suno');
 const updatesDirectory = path.join(dataDirectory, 'updates');
+const apiPassBaseUrl = 'https://api.apipass.dev';
 const updateRepository = 'FennXWeb/firefly-music-player';
 const updateBranches = { stable: 'main', beta: 'beta' };
 let downloadedUpdatePath = '';
@@ -203,6 +205,126 @@ async function cacheArtistImage(options = {}) {
   await writeBufferAtomic(filePath, buffer);
   return { imageUrl: pathToFileURL(filePath).href, cachedAt: new Date().toISOString() };
 }
+async function apiPassRequest(resource, options = {}) {
+  const savedCredentials = await readJson(credentialsPath, {});
+  const apiKey = decryptSecret(savedCredentials.sunoToken);
+  if (!apiKey) throw new Error('Connect an ApiPass API key before using Suno Studio.');
+  const response = await net.fetch(`${apiPassBaseUrl}${resource}`, {
+    ...options,
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.headers || {})
+    }
+  });
+  const body = await response.json().catch(() => ({}));
+  if (response.status === 401 || response.status === 403 || body?.code === 401 || body?.code === 403) throw new Error('ApiPass rejected this API key. Check the key and try again.');
+  if (!response.ok) throw new Error(body?.message || body?.msg || `ApiPass returned ${response.status}.`);
+  return body;
+}
+async function testSunoConnection() {
+  const savedCredentials = await readJson(credentialsPath, {});
+  const apiKey = decryptSecret(savedCredentials.sunoToken);
+  if (!apiKey) throw new Error('Enter an ApiPass API key.');
+  const response = await net.fetch(`${apiPassBaseUrl}/api/v1/jobs/recordInfo?taskId=firefly_connection_check`, { headers: { Accept: 'application/json', Authorization: `Bearer ${apiKey}` } });
+  const body = await response.json().catch(() => ({}));
+  if (response.status === 401 || response.status === 403 || body?.code === 401 || body?.code === 403) throw new Error('ApiPass rejected this API key. Check the key and try again.');
+  if (response.status >= 500) throw new Error('ApiPass is temporarily unavailable. Try again shortly.');
+  return { connected: true, provider: 'ApiPass', baseUrl: apiPassBaseUrl };
+}
+function boundedNumber(value, fallback = 0.5) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.min(1, Math.max(0, Math.round(number * 100) / 100)) : fallback;
+}
+async function createSunoTask(options = {}) {
+  const customMode = Boolean(options.customMode), instrumental = Boolean(options.instrumental);
+  const modelVersion = ['V5_5','V5','V4_5PLUS','V4_5ALL','V4_5','V4'].includes(options.modelVersion) ? options.modelVersion : 'V5_5';
+  const channel = ['auto','starter','regular','official'].includes(options.channel) ? options.channel : 'auto';
+  let prompt = String(options.prompt || '').trim(), title = String(options.title || '').trim(), style = String(options.style || '').trim();
+  if (!customMode) {
+    if (!prompt) throw new Error('Describe the song you want to generate.');
+    prompt = prompt.slice(0, 500); title = ''; style = '';
+  } else {
+    if (!title || !style) throw new Error('Custom mode requires a title and style.');
+    if (!instrumental && !prompt) throw new Error('Custom vocal mode requires lyrics or a lyric prompt.');
+    if (instrumental) prompt = '';
+    prompt = prompt.slice(0, modelVersion === 'V4' ? 3000 : 5000);
+    title = title.slice(0, 80); style = style.slice(0, modelVersion === 'V4' ? 200 : 1000);
+  }
+  const input = { model_version: modelVersion, prompt, title, style, customMode, instrumental };
+  if (customMode) {
+    if (['m','f'].includes(options.vocalGender) && !instrumental) input.vocalGender = options.vocalGender;
+    const negativeTags = String(options.negativeTags || '').trim();
+    if (negativeTags) input.negativeTags = negativeTags.slice(0, 1000);
+    input.styleWeight = boundedNumber(options.styleWeight, 0.5);
+    input.weirdnessConstraint = boundedNumber(options.weirdnessConstraint, 0.3);
+    input.audioWeight = boundedNumber(options.audioWeight, 0.5);
+  }
+  const body = await apiPassRequest('/api/v1/jobs/createTask', { method: 'POST', body: JSON.stringify({ model: 'suno/generate', input, channel }) });
+  if (Number(body?.code) !== 200) throw new Error(body?.message || body?.msg || 'ApiPass could not create this generation task.');
+  const taskId = body?.data?.taskId || body?.taskId;
+  if (!taskId) throw new Error('ApiPass returned no task ID.');
+  return { taskId: String(taskId), state: 'queuing', model: 'suno/generate', input, channel, createdAt: new Date().toISOString() };
+}
+function normalizedSunoResults(resultJson) {
+  if (typeof resultJson === 'string') { try { resultJson = JSON.parse(resultJson); } catch { resultJson = {}; } }
+  const items = Array.isArray(resultJson?.data) ? resultJson.data : Array.isArray(resultJson) ? resultJson : [];
+  return items.map((item, index) => ({
+    id: String(item.id || item.audio_id || `variant-${index + 1}`),
+    audioUrl: String(item.audio_url || item.audioUrl || item.stream_audio_url || ''),
+    imageUrl: String(item.image_url || item.imageUrl || item.cover_url || ''),
+    videoUrl: String(item.video_url || item.videoUrl || ''),
+    duration: Number(item.duration) || null,
+    title: String(item.title || ''),
+    style: String(item.style || item.tags || ''),
+    status: String(item.status || 'complete')
+  })).filter(item => item.audioUrl);
+}
+async function querySunoTask(taskId = '') {
+  taskId = String(taskId).trim();
+  if (!/^[A-Za-z0-9_-]{1,180}$/.test(taskId)) throw new Error('The ApiPass task ID is invalid.');
+  const body = await apiPassRequest(`/api/v1/jobs/recordInfo?taskId=${encodeURIComponent(taskId)}`);
+  if (Number(body?.code) !== 200) throw new Error(body?.message || body?.msg || 'ApiPass could not find this generation task.');
+  const data = body?.data || {}, state = String(data.state || body.status || 'queuing').toLowerCase();
+  const completedDate = data.completeTime ? new Date(Number(data.completeTime)) : null;
+  return {
+    taskId,
+    state,
+    failCode: String(data.failCode || ''),
+    failMsg: String(data.failMsg || body?.message || body?.msg || ''),
+    completedAt: completedDate && !Number.isNaN(completedDate.getTime()) ? completedDate.toISOString() : null,
+    results: state === 'success' ? normalizedSunoResults(data.resultJson) : []
+  };
+}
+function safeSunoAssetUrl(value = '') {
+  const url = new URL(value);
+  const host = url.hostname.toLowerCase();
+  if (url.protocol !== 'https:' || host === 'localhost' || host.endsWith('.local') || /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)) throw new Error('ApiPass returned an unsafe asset URL.');
+  return url.href;
+}
+async function downloadSunoAsset(source, filePath, maximumBytes) {
+  const response = await net.fetch(safeSunoAssetUrl(source));
+  if (!response.ok) throw new Error(`Generated asset download returned ${response.status}.`);
+  const announced = Number(response.headers.get('content-length')) || 0;
+  if (announced > maximumBytes) throw new Error('The generated asset is too large to import.');
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (!buffer.length || buffer.length > maximumBytes) throw new Error('The generated asset is empty or too large to import.');
+  await writeBufferAtomic(filePath, buffer);
+  return pathToFileURL(filePath).href;
+}
+async function importSunoTrack(options = {}) {
+  const taskStem = safeFileStem(options.taskId || 'generation'), resultStem = safeFileStem(options.resultId || options.title || 'track');
+  const folder = path.join(sunoDirectory, taskStem);
+  const audioPath = path.join(folder, `${resultStem}.mp3`);
+  const audioUrl = await downloadSunoAsset(options.audioUrl, audioPath, 150 * 1024 * 1024);
+  let imageUrl = '';
+  if (options.imageUrl) {
+    try { imageUrl = await downloadSunoAsset(options.imageUrl, path.join(folder, `${resultStem}.jpg`), 20 * 1024 * 1024); }
+    catch { imageUrl = ''; }
+  }
+  return { audioUrl, audioPath, imageUrl, importedAt: new Date().toISOString() };
+}
 function encryptSecret(value = '') {
   if (!value) return '';
   return safeStorage.isEncryptionAvailable()
@@ -340,6 +462,10 @@ app.whenReady().then(() => {
   ipcMain.handle('dynamic-case:ensure-fonts', async () => ensureDynamicFontLibrary());
   ipcMain.handle('dynamic-case:generate', async (_event, options) => generateDynamicCaseArt(options));
   ipcMain.handle('artist:image-cache', async (_event, options) => cacheArtistImage(options));
+  ipcMain.handle('suno:test', async () => testSunoConnection());
+  ipcMain.handle('suno:create', async (_event, options) => createSunoTask(options));
+  ipcMain.handle('suno:query', async (_event, taskId) => querySunoTask(taskId));
+  ipcMain.handle('suno:import-track', async (_event, options) => importSunoTrack(options));
   ipcMain.handle('update:check', async (_event, channel) => checkForUpdates(channel));
   ipcMain.handle('update:download', async (event, channel) => downloadUpdate(event.sender,channel));
   ipcMain.handle('update:launch', async () => {

@@ -8,10 +8,14 @@ let customPlaylists = [];
 let shelves = [];
 let artistProfiles = {};
 let sunoConnected = false;
+let sunoJobs = [];
+let sunoTab = 'create';
+let sunoPolling = false;
+let sunoPollTimer = null;
 const defaultSettings = {
   accent: '#f55f45', accentRgb: '245,95,69', ambient: true,
   reducedMotion: false, gapless: true, crossfade: 40, volume: 72,
-  sunoEndpoint: 'https://api.suno.ai', updateChannel: 'stable'
+  sunoEndpoint: 'https://api.apipass.dev', sunoModel: 'V5_5', sunoChannel: 'auto', updateChannel: 'stable'
 };
 let settings = { ...defaultSettings };
 let credentials = { openaiKey: '', sunoToken: '' };
@@ -127,7 +131,7 @@ function runBulkAction(action){
 function saveLibrary() {
   pruneEmptyAlbums();
   syncShelves();
-  const state = { albums, playlists:customPlaylists, shelves, artistProfiles, sunoConnected, settings };
+  const state = { albums, playlists:customPlaylists, shelves, artistProfiles, sunoConnected, sunoJobs, settings };
   try { localStorage.setItem('firefly-library-v1', JSON.stringify(state)); }
   catch { toast('Library is too large to cache','Your current session is safe, but large uploaded artwork may not persist.'); }
   if (persistenceReady && window.firefly?.saveState) {
@@ -137,15 +141,18 @@ function saveLibrary() {
   renderSidebarPlaylists();
 }
 function saveCredentials() {
-  if (persistenceReady && window.firefly?.saveCredentials) window.firefly.saveCredentials(credentials).catch(() => toast('Could not save connection credentials'));
+  if (persistenceReady && window.firefly?.saveCredentials) return window.firefly.saveCredentials(credentials).catch(() => { toast('Could not save connection credentials'); return false; });
+  return Promise.resolve(false);
 }
 function applySavedState(saved = {}) {
   if (Array.isArray(saved.albums)) albums = saved.albums;
   if (Array.isArray(saved.playlists)) customPlaylists = saved.playlists;
   if (Array.isArray(saved.shelves)) shelves = saved.shelves;
   if (saved.artistProfiles && typeof saved.artistProfiles === 'object' && !Array.isArray(saved.artistProfiles)) artistProfiles = saved.artistProfiles;
+  if (Array.isArray(saved.sunoJobs)) sunoJobs = saved.sunoJobs;
   sunoConnected = Boolean(saved.sunoConnected);
   settings = { ...defaultSettings, ...(saved.settings || {}) };
+  settings.sunoEndpoint = defaultSettings.sunoEndpoint;
 }
 function applySettings() {
   document.documentElement.style.setProperty('--accent', settings.accent);
@@ -180,6 +187,7 @@ async function initializePersistence() {
   render();
   if (!durableState || migrateLegacy || removedEmptyAlbums) saveLibrary();
   initializeUpdater();
+  initializeSunoPolling();
 }
 function toast(title, detail = '') {
   const el = document.createElement('div');
@@ -562,7 +570,7 @@ function renderSettings() {
     <div class="setting-row"><div><b>Reduced motion</b><small>Minimize shelf, artwork, and navigation effects</small></div><button class="switch ${settings.reducedMotion?'on':''}" data-toggle="motion" aria-label="Toggle reduced motion"></button></div>
     <div class="setting-row"><div><b>Metadata provider</b><small>MusicBrainz with Cover Art Archive fallback</small></div><select><option>MusicBrainz + CAA</option><option>Discogs</option><option>Custom provider</option></select></div>
     <div class="setting-row"><div><b>OpenAI API key</b><small>Encrypted with Windows and kept outside the app installation</small></div><input id="openaiKey" type="password" value="${esc(credentials.openaiKey)}" placeholder="Not connected" autocomplete="off"/></div>
-    <div class="setting-row"><div><b>Suno connection</b><small>Browse, create, and import from your Suno library</small></div><button class="ghost" id="connectSuno">${sunoConnected?'Manage connection':'Connect Suno'}</button></div>
+    <div class="setting-row"><div><b>ApiPass · Suno</b><small>Generate with Suno V5.5 and import completed tracks into Firefly</small></div><button class="ghost" id="connectSuno">${sunoConnected?'Manage connection':'Connect ApiPass'}</button></div>
     <div class="setting-row"><div><b>Gapless playback</b><small>Remove silence between supported tracks</small></div><button class="switch ${settings.gapless?'on':''}" data-toggle="gapless"></button></div>
     <div class="setting-row"><div><b>Audio crossfade</b><small>Blend the final seconds into the next track</small></div><input id="crossfadeSetting" type="range" value="${settings.crossfade}" style="width:170px;--range:${settings.crossfade}%"/></div>
     <div class="setting-row update-setting-row"><div><b>Update channel</b><small>Stable follows main; Test follows the beta branch</small></div><span class="update-setting-controls"><select id="updateChannel"><option value="stable" ${settings.updateChannel!=='beta'?'selected':''}>Stable · main</option><option value="beta" ${settings.updateChannel==='beta'?'selected':''}>Test · beta</option></select><button class="ghost" id="checkForUpdates">Check now</button></span></div>
@@ -581,16 +589,68 @@ function renderSettings() {
   $$('.settings-menu button',view).forEach(btn=>btn.onclick=()=>{$$('.settings-menu button',view).forEach(b=>b.classList.remove('active'));btn.classList.add('active');toast(`${btn.textContent} preferences selected`)});
 }
 
-function renderSuno() {
-  view.innerHTML = `<section class="suno-hero"><span class="connect-pill connection-status ${sunoConnected?'connected':''}"><i></i>${icon('suno')} SUNO STUDIO · ${sunoConnected?'CONNECTED':'NOT CONNECTED'}</span><h1>Make something unheard.</h1><p>Generate songs, explore the public feed, and bring your Suno library into Firefly without leaving your collection.</p><button class="primary" id="sunoConnect">${sunoConnected?'Manage connection':'Connect Suno'}</button></section><div class="suno-tabs"><button class="chip active">For you</button><button class="chip">Your library</button><button class="chip">Create</button></div><div class="empty-state">${icon('suno')}<h2>${sunoConnected?'Suno provider connected':'Connect to load Suno'}</h2><p>${sunoConnected?'Choose Your library or Create to begin using your configured provider.':'Connect a compatible provider to browse or generate music. No example tracks are shown.'}</p></div>`;
-  $('#sunoConnect').onclick=connectSunoModal;
-  $$('.suno-tabs .chip',view).forEach(b=>b.onclick=()=>{$$('.suno-tabs .chip',view).forEach(x=>x.classList.remove('active'));b.classList.add('active');toast(`${b.textContent} loaded`)});
+function sunoStateLabel(state='queuing'){return({queuing:'Queued',pending:'Queued',generating:'Generating',processing:'Generating',success:'Complete',fail:'Failed'}[state]||state)}
+function pendingSunoJob(job){return['queuing','pending','generating','processing'].includes(job.state)}
+function sunoResultMarkup(job,result,index){
+  const imported=Boolean(result.importedTrackId&&allTracks().some(track=>track.id===result.importedTrackId));
+  const art=result.imageUrl?`style="background-image:url(&quot;${esc(result.imageUrl)}&quot;)"`:'';
+  return `<article class="suno-result"><div class="suno-result-art" ${art}><span>VARIANT ${index+1}</span></div><div class="suno-result-copy"><h3>${esc(result.title||job.title||`Variant ${index+1}`)}</h3><p>${esc(result.style||job.style||'Suno generation')} · ${result.duration?displayDuration(result.duration):'Ready'}</p><audio controls preload="none" src="${esc(result.audioUrl)}"></audio><div><button class="primary" data-suno-import data-task-id="${esc(job.taskId)}" data-result-index="${index}" ${imported?'disabled':''}>${icon(imported?'song':'upload')} ${imported?'Imported':'Import to Firefly'}</button></div></div></article>`;
 }
-
+function renderSuno() {
+  const pending=sunoJobs.filter(pendingSunoJob).length;
+  view.innerHTML=`<section class="suno-hero"><span class="connect-pill connection-status ${sunoConnected?'connected':''}"><i></i>${icon('suno')} APIPASS · SUNO ${sunoConnected?'CONNECTED':'NOT CONNECTED'}</span><h1>Make something unheard.</h1><p>Generate full Suno songs through ApiPass, track them in the background, preview both variants, and import the finished audio into your permanent Firefly library.</p><div class="suno-hero-actions"><button class="primary" id="sunoConnect">${sunoConnected?'Manage ApiPass':'Connect ApiPass'}</button><button class="ghost" id="openApiPassDocs">API documentation ↗</button>${pending?`<span class="suno-running"><i class="spinner"></i>${pending} running</span>`:''}</div></section><div class="suno-tabs"><button class="chip ${sunoTab==='create'?'active':''}" data-suno-tab="create">Create</button><button class="chip ${sunoTab==='generations'?'active':''}" data-suno-tab="generations">Your generations <em>${sunoJobs.length}</em></button><button class="chip ${sunoTab==='capabilities'?'active':''}" data-suno-tab="capabilities">ApiPass capabilities</button></div><div id="sunoContent"></div>`;
+  $('#sunoConnect').onclick=connectSunoModal;
+  $('#openApiPassDocs').onclick=()=>window.open('https://apipass.dev/features/suno','_blank');
+  $$('[data-suno-tab]',view).forEach(button=>button.onclick=()=>{sunoTab=button.dataset.sunoTab;renderSuno()});
+  if(!sunoConnected){$('#sunoContent').innerHTML=`<div class="empty-state">${icon('suno')}<h2>Connect ApiPass to begin</h2><p>Paste an ApiPass API key. Firefly encrypts it with Windows and sends it only from the protected main process.</p><button class="primary" id="emptySunoConnect">Connect ApiPass</button></div>`;$('#emptySunoConnect').onclick=connectSunoModal;return}
+  if(sunoTab==='create')renderSunoCreate();
+  else if(sunoTab==='generations')renderSunoGenerations();
+  else renderSunoCapabilities();
+}
+function renderSunoCreate(){
+  const host=$('#sunoContent');
+  host.innerHTML=`<form class="suno-create-panel" id="sunoCreateForm"><header><div><span>TEXT TO MUSIC</span><h2>Create with Suno</h2><p>ApiPass queues generation in the background and normally returns two complete MP3 variants.</p></div><span class="suno-provider-mark">Suno V5.5</span></header><div class="form-grid suno-create-grid"><div class="field"><label>MODEL</label><select id="sunoModel"><option value="V5_5">V5.5 · Latest</option><option value="V5">V5</option><option value="V4_5PLUS">V4.5 Plus</option><option value="V4_5ALL">V4.5 All</option><option value="V4_5">V4.5</option><option value="V4">V4</option></select></div><div class="field"><label>ROUTING</label><select id="sunoChannel"><option value="auto">Auto · Recommended</option><option value="starter">Starter</option><option value="regular">Regular</option><option value="official">Official</option></select></div><label class="suno-mode-toggle"><input id="sunoCustom" type="checkbox"><span>${icon('settings')}<b>Custom mode</b><small>Control lyrics, title, style, and generation weights</small></span></label><label class="suno-mode-toggle"><input id="sunoInstrumental" type="checkbox"><span>${icon('song')}<b>Instrumental</b><small>Generate without vocals</small></span></label><div class="field full"><label id="sunoPromptLabel">SONG DESCRIPTION</label><textarea id="sunoPrompt" rows="7" maxlength="5000" placeholder="An atmospheric synth-pop song about driving through a neon city at midnight…"></textarea><small id="sunoPromptHint">Describe the mood, instruments, tempo, theme, and vocal character.</small></div><div class="suno-custom-fields hidden"><div class="field"><label>TITLE</label><input id="sunoTitle" maxlength="80" placeholder="Midnight Circuit"></div><div class="field"><label>STYLE</label><input id="sunoStyle" maxlength="1000" placeholder="Synth-pop, cinematic, female vocal"></div><div class="field"><label>VOCAL GENDER</label><select id="sunoVocalGender"><option value="">Any</option><option value="f">Female</option><option value="m">Male</option></select></div><div class="field"><label>EXCLUDE</label><input id="sunoNegativeTags" maxlength="1000" placeholder="screaming, harsh distortion"></div><div class="field"><label>STYLE WEIGHT · <output id="sunoStyleWeightOut">0.50</output></label><input id="sunoStyleWeight" type="range" min="0" max="1" step="0.01" value="0.5"></div><div class="field"><label>WEIRDNESS · <output id="sunoWeirdnessOut">0.30</output></label><input id="sunoWeirdness" type="range" min="0" max="1" step="0.01" value="0.3"></div><div class="field"><label>AUDIO WEIGHT · <output id="sunoAudioWeightOut">0.50</output></label><input id="sunoAudioWeight" type="range" min="0" max="1" step="0.01" value="0.5"></div></div></div><footer><p>Generation uses your ApiPass credits. Firefly polls securely while you use the rest of the app.</p><button class="primary" id="generateSuno" type="submit">${icon('spark')} Generate two variants</button></footer></form>`;
+  $('#sunoModel').value=settings.sunoModel||'V5_5';$('#sunoChannel').value=settings.sunoChannel||'auto';
+  const syncMode=()=>{const custom=$('#sunoCustom').checked,instrumental=$('#sunoInstrumental').checked;$('.suno-custom-fields',host).classList.toggle('hidden',!custom);$('#sunoPrompt').disabled=custom&&instrumental;$('#sunoPromptLabel').textContent=custom?(instrumental?'PROMPT · EMPTY FOR CUSTOM INSTRUMENTAL':'LYRICS / LYRIC DIRECTION'):'SONG DESCRIPTION';$('#sunoPromptHint').textContent=custom?(instrumental?'ApiPass requires an explicit empty prompt in this mode.':'Enter lyrics or a detailed lyric direction.'):'Describe the mood, instruments, tempo, theme, and vocal character.';if(custom&&instrumental)$('#sunoPrompt').value='';$('#sunoVocalGender').disabled=instrumental};
+  $('#sunoCustom').onchange=syncMode;$('#sunoInstrumental').onchange=syncMode;
+  [['#sunoStyleWeight','#sunoStyleWeightOut'],['#sunoWeirdness','#sunoWeirdnessOut'],['#sunoAudioWeight','#sunoAudioWeightOut']].forEach(([range,output])=>$(range).oninput=event=>{$(output).textContent=Number(event.target.value).toFixed(2);setRange(event.target,Number(event.target.value)*100)});syncMode();
+  $('#sunoCreateForm').onsubmit=submitSunoGeneration;
+}
+async function submitSunoGeneration(event){
+  event.preventDefault();const button=$('#generateSuno'),customMode=$('#sunoCustom').checked,instrumental=$('#sunoInstrumental').checked;
+  const options={modelVersion:$('#sunoModel').value,channel:$('#sunoChannel').value,customMode,instrumental,prompt:$('#sunoPrompt').value,title:customMode?$('#sunoTitle').value:'',style:customMode?$('#sunoStyle').value:'',vocalGender:$('#sunoVocalGender').value,negativeTags:$('#sunoNegativeTags').value,styleWeight:$('#sunoStyleWeight').value,weirdnessConstraint:$('#sunoWeirdness').value,audioWeight:$('#sunoAudioWeight').value};
+  if(!options.prompt.trim()&&!customMode){toast('Describe the song first');$('#sunoPrompt').focus();return}
+  if(customMode&&(!options.title.trim()||!options.style.trim()||(!instrumental&&!options.prompt.trim()))){toast('Complete the custom song details','Title, style, and vocal lyrics are required.');return}
+  button.disabled=true;button.innerHTML=`<span class="spinner"></span> Sending to ApiPass`;
+  try{const task=await window.firefly.createSunoTask(options);settings.sunoModel=options.modelVersion;settings.sunoChannel=options.channel;sunoJobs.unshift({...task,title:task.input.title||options.prompt.trim().slice(0,70)||'Instrumental generation',style:task.input.style||'Description mode',prompt:task.input.prompt,results:[],lastError:''});sunoTab='generations';saveLibrary();renderSuno();toast('Generation started','ApiPass is creating two variants in the background.');setTimeout(pollSunoJobs,1500)}catch(error){button.disabled=false;button.innerHTML=`${icon('spark')} Generate two variants`;toast('Could not start generation',error.message)}
+}
+function renderSunoGenerations(){
+  const host=$('#sunoContent');
+  if(!sunoJobs.length){host.innerHTML=`<div class="empty-state">${icon('spark')}<h2>No generations yet</h2><p>Create a song and both ApiPass variants will appear here when ready.</p><button class="primary" id="startFirstSuno">Create your first song</button></div>`;$('#startFirstSuno').onclick=()=>{sunoTab='create';renderSuno()};return}
+  host.innerHTML=`<div class="suno-job-list">${sunoJobs.map(job=>`<section class="suno-job ${pendingSunoJob(job)?'running':''}"><header><div><span class="suno-state ${esc(job.state)}">${pendingSunoJob(job)?'<i class="spinner"></i>':''}${esc(sunoStateLabel(job.state))}</span><h2>${esc(job.title||'Suno generation')}</h2><p>${esc(job.style||job.model||'suno/generate')} · ${new Date(job.createdAt||Date.now()).toLocaleString()}</p></div><div><button class="ghost" data-suno-refresh="${esc(job.taskId)}">Refresh</button><button class="icon-button" data-suno-delete="${esc(job.taskId)}" title="Remove generation record">${icon('close')}</button></div></header>${job.state==='fail'?`<div class="suno-error"><b>${esc(job.failCode||'Generation failed')}</b><span>${esc(job.failMsg||job.lastError||'ApiPass could not finish this task.')}</span></div>`:''}${pendingSunoJob(job)?`<div class="suno-progress"><span></span><p>${job.state==='generating'?'Suno is composing and rendering your tracks…':'Waiting for an ApiPass worker…'}</p></div>`:''}${job.state==='success'&&!job.results?.length?`<div class="suno-error"><b>Task completed without playable audio</b><span>Refresh once more. ApiPass may still be finalizing its result payload.</span></div>`:''}${job.results?.length?`<div class="suno-result-grid">${job.results.map((result,index)=>sunoResultMarkup(job,result,index)).join('')}</div>`:''}<footer><span>Task ${esc(job.taskId)}</span></footer></section>`).join('')}</div>`;
+  $$('[data-suno-refresh]',host).forEach(button=>button.onclick=()=>pollSunoJob(button.dataset.sunoRefresh,true));
+  $$('[data-suno-delete]',host).forEach(button=>button.onclick=()=>{sunoJobs=sunoJobs.filter(job=>job.taskId!==button.dataset.sunoDelete);saveLibrary();renderSuno();toast('Generation record removed','Imported music remains in your library.')});
+  $$('[data-suno-import]',host).forEach(button=>button.onclick=()=>importSunoResult(button.dataset.taskId,Number(button.dataset.resultIndex),button));
+}
+function renderSunoCapabilities(){
+  $('#sunoContent').innerHTML=`<div class="suno-capability-intro"><div><span>APIPASS SUNO API</span><h2>One protected connection</h2><p>Firefly currently integrates text-to-music generation and task polling—the production starting point recommended by ApiPass. Generated MP3s and artwork can be imported locally.</p></div><button class="ghost" id="capabilityDocs">Read ApiPass guide ↗</button></div><div class="suno-capability-grid"><article class="ready">${icon('spark')}<b>Generate Music</b><span>Integrated · V5.5 through V4</span></article><article class="ready">${icon('list')}<b>Async Task Queue</b><span>Integrated · background polling</span></article><article>${icon('song')}<b>Generate Lyrics</b><span>Available from ApiPass</span></article><article>${icon('albums')}<b>Create Covers</b><span>Available from ApiPass</span></article><article>${icon('plus')}<b>Extend Songs</b><span>Available from ApiPass</span></article><article>${icon('artist')}<b>Vocal Separation</b><span>Available from ApiPass</span></article></div>`;$('#capabilityDocs').onclick=()=>window.open('https://apipass.dev/document/suno-api-integration-guide','_blank');
+}
+async function pollSunoJob(taskId,manual=false){
+  const job=sunoJobs.find(item=>item.taskId===taskId);if(!job||!window.firefly?.querySunoTask)return;
+  const prior=job.state;if(manual&&currentView==='suno')toast('Checking ApiPass',job.title);
+  try{const result=await window.firefly.querySunoTask(taskId);Object.assign(job,result,{lastCheckedAt:new Date().toISOString(),lastError:''});saveLibrary();if(prior!==job.state&&job.state==='success')toast('Suno generation complete',`${job.results.length} variant${job.results.length===1?'':'s'} ready to preview`);if(prior!==job.state&&job.state==='fail')toast('Suno generation failed',job.failMsg||job.failCode);if(currentView==='suno')renderSuno()}catch(error){job.lastError=error.message;job.lastCheckedAt=new Date().toISOString();saveLibrary();if(manual)toast('Could not refresh generation',error.message)}
+}
+async function pollSunoJobs(){if(sunoPolling||!sunoConnected)return;const pending=sunoJobs.filter(pendingSunoJob);if(!pending.length)return;sunoPolling=true;try{await Promise.all(pending.slice(0,4).map(job=>pollSunoJob(job.taskId)))}finally{sunoPolling=false}}
+function initializeSunoPolling(){clearInterval(sunoPollTimer);sunoPollTimer=setInterval(pollSunoJobs,12000);if(sunoConnected&&sunoJobs.some(pendingSunoJob))setTimeout(pollSunoJobs,1200)}
+async function importSunoResult(taskId,index,button){
+  const job=sunoJobs.find(item=>item.taskId===taskId),result=job?.results?.[index];if(!job||!result)return;
+  button.disabled=true;button.innerHTML=`<span class="spinner"></span> Importing`;
+  try{const cached=await window.firefly.importSunoTrack({taskId,resultId:result.id,title:result.title,audioUrl:result.audioUrl,imageUrl:result.imageUrl});const albumId=`suno-${taskId}`,albumTitle=job.title||result.title||'Suno Generation';let album=albumById(albumId);if(!album){album={id:albumId,title:albumTitle,artist:'Suno AI',year:new Date().getFullYear(),genre:result.style||job.style||'AI Generated',cover:(cached.imageUrl||result.imageUrl)?'':'cover-8',customCover:cached.imageUrl||result.imageUrl||null,fullArt:null,tracks:[]};albums.push(album)}const trackId=`suno-${taskId}-${String(result.id||index).replace(/[^A-Za-z0-9_-]+/g,'-')}`;let track=allTracks().find(item=>item.id===trackId);if(!track){track={id:trackId,title:result.title||`${albumTitle} · Variant ${index+1}`,artist:'Suno AI',album:album.title,albumId:album.id,duration:displayDuration(result.duration),trackNumber:index+1,discNumber:1,plays:0,lastPlayed:null,added:Date.now(),pending:false,url:cached.audioUrl,path:cached.audioPath,source:{provider:'ApiPass',model:job.model,taskId,resultId:result.id}};album.tracks.push(track);album.tracks.sort((left,right)=>(left.trackNumber||0)-(right.trackNumber||0))}result.importedTrackId=track.id;result.localAudioUrl=cached.audioUrl;saveLibrary();renderSuno();toast('Suno track imported',`${track.title} is now in your library.`)}catch(error){button.disabled=false;button.innerHTML=`${icon('upload')} Import to Firefly`;toast('Could not import generated track',error.message)}
+}
 function connectSunoModal() {
-  openModal(`<div class="modal-head"><h2>${sunoConnected?'Suno connection':'Connect Suno'}</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body">${sunoConnected?`<div class="lookup-status"><span class="status-dot"></span><span>Connected for this Firefly profile. Credentials are encrypted and stored outside the app installation.</span></div>`:''}<div class="form-grid"><div class="field full"><label>SUNO API / PROVIDER URL</label><input id="sunoEndpoint" value="${esc(settings.sunoEndpoint)}" placeholder="https://your-suno-provider.example"></div><div class="field full"><label>ACCESS TOKEN</label><input id="sunoToken" type="password" value="${esc(credentials.sunoToken)}" placeholder="Paste a provider token" autocomplete="off"></div></div><p style="color:#706c67;font-size:9px;margin:14px 0 0">Suno does not provide a universally available public API. Firefly supports provider-compatible endpoints and keeps this connection local to your profile.</p></div><div class="modal-actions">${sunoConnected?'<button class="ghost" id="disconnectSuno" style="margin-right:auto;color:#ef806f">Disconnect</button>':''}<button class="ghost close-modal">Cancel</button><button class="primary" id="finishSunoConnect">${sunoConnected?'Update':'Connect'}</button></div>`,true);
-  $('#finishSunoConnect').onclick=()=>{const token=$('#sunoToken').value.trim();if(!sunoConnected&&!token){$('#sunoToken').focus();toast('Enter a provider token');return}settings.sunoEndpoint=$('#sunoEndpoint').value.trim()||defaultSettings.sunoEndpoint;credentials.sunoToken=token;sunoConnected=true;saveCredentials();saveLibrary();closeModal();if(currentView==='suno')renderSuno();else if(currentView==='settings')renderSettings();toast('Suno connected','Connection details will persist across upgrades.')};
-  if($('#disconnectSuno'))$('#disconnectSuno').onclick=()=>{sunoConnected=false;credentials.sunoToken='';saveCredentials();saveLibrary();closeModal();if(currentView==='suno')renderSuno();else renderSettings();toast('Suno disconnected')};
+  openModal(`<div class="modal-head"><h2>${sunoConnected?'Manage ApiPass':'Connect ApiPass'}</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body">${sunoConnected?`<div class="lookup-status"><span class="status-dot"></span><span>Connected to ApiPass. The key is encrypted with Windows and stored outside the app installation.</span></div>`:''}<div class="form-grid"><div class="field full"><label>PROVIDER</label><input value="https://api.apipass.dev" readonly></div><div class="field full"><label>APIPASS API KEY</label><input id="sunoToken" type="password" value="${esc(credentials.sunoToken)}" placeholder="sk-ap-xxxxxxxxxxxxxx" autocomplete="off"></div></div><p class="suno-connect-note">Create a key in <a href="https://apipass.dev/app/api-keys" target="_blank" rel="noreferrer">ApiPass API Keys ↗</a>. Firefly uses Bearer authentication through its protected main process; generation consumes your ApiPass credits.</p></div><div class="modal-actions">${sunoConnected?'<button class="ghost" id="disconnectSuno" style="margin-right:auto;color:#ef806f">Disconnect</button>':''}<button class="ghost close-modal">Cancel</button><button class="primary" id="finishSunoConnect">${sunoConnected?'Verify & save':'Connect & verify'}</button></div>`,true);
+  $('#finishSunoConnect').onclick=async()=>{const token=$('#sunoToken').value.trim(),button=$('#finishSunoConnect');if(!token){$('#sunoToken').focus();toast('Enter an ApiPass API key');return}button.disabled=true;button.innerHTML=`<span class="spinner"></span> Verifying`;credentials.sunoToken=token;try{if(!await saveCredentials())throw new Error('The API key could not be saved.');await window.firefly.testSunoConnection();settings.sunoEndpoint=defaultSettings.sunoEndpoint;sunoConnected=true;saveLibrary();closeModal();if(currentView==='suno')renderSuno();else if(currentView==='settings')renderSettings();initializeSunoPolling();toast('ApiPass connected','Suno generation is ready.') }catch(error){sunoConnected=false;saveLibrary();button.disabled=false;button.textContent='Connect & verify';toast('ApiPass connection failed',error.message)}};
+  if($('#disconnectSuno'))$('#disconnectSuno').onclick=async()=>{sunoConnected=false;credentials.sunoToken='';await saveCredentials().catch(()=>{});saveLibrary();closeModal();if(currentView==='suno')renderSuno();else renderSettings();toast('ApiPass disconnected')};
 }
 
 function shelfAlbumMarkup(album,shelfId){
