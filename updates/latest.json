@@ -1,9 +1,9 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.17",
-  "publishedAt": "2026-08-04T01:57:30.3709534Z",
+  "version": "0.1.18",
+  "publishedAt": "2026-08-04T02:14:34.4005119Z",
   "notes": "Added a guided Windows installer with install-location selection, Start Menu and desktop shortcuts, upgrade and uninstall support, and persistent library data that remains safe across upgrades. A separately named portable build is still available.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.17/Firefly-0.1.17-Windows.exe",
-  "sha256": "8302453001EE823E57ABA3BE508D294FF1978B923C5B5917E268E03EF0534535"
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.18/Firefly-0.1.18-Setup.exe",
+  "sha256": "CE7A565452C93F56413CD2E4D73089A3FD17B6F2949D9859347505EF8A0055EC"
 }
