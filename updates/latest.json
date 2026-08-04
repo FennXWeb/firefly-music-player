@@ -3,7 +3,7 @@
   "branch": "beta",
   "version": "0.1.21",
   "publishedAt": "2026-08-04T03:10:32.0608445Z",
-  "notes": "Added a new animated Home dashboard with a prominent daily Today’s Mix, Recently Played, Recently Added, return favorites, backlog discovery, top artists, and library insights. Today’s Mix now blends underplayed songs from favorite genres, top tracks, and repeat-return favorites using private on-device listening history. The entire app also received liquid-glass surfaces, richer color, spring motion, pointer-reactive lighting, and more tactile controls.",
+  "notes": "Added Playlist Cover Studio with seven background styles, custom image uploads, curated color palettes, five font treatments, four text layouts, custom title and subtitle text, and five animated overlays. Covers now appear consistently in the playlist library, sidebar, and playlist detail pages, and new playlists can launch directly into the creator.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.21/Firefly-0.1.21-Setup.exe",
   "sha256": "719226731E62F20B638C1A8D83E918DF186F2DD7F795BF325501ABA3A8CE901E"
 }
