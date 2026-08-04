@@ -16,7 +16,7 @@ contextBridge.exposeInMainWorld('firefly', {
   openDataDirectory: () => ipcRenderer.invoke('state:open-directory'),
   ensureDynamicFonts: () => ipcRenderer.invoke('dynamic-case:ensure-fonts'),
   generateDynamicCaseArt: options => ipcRenderer.invoke('dynamic-case:generate', options),
-  searchArtistImages: artist => ipcRenderer.invoke('artist:image-search', artist),
+  searchArtistImages: (artist, options) => ipcRenderer.invoke('artist:image-search', artist, options),
   cacheArtistImage: options => ipcRenderer.invoke('artist:image-cache', options),
   searchYouTubeVideos: options => ipcRenderer.invoke('video:search-youtube', options),
   lookupLyrics: options => ipcRenderer.invoke('lyrics:lookup', options),

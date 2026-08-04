@@ -16,8 +16,10 @@ let sunoPolling = false;
 let sunoPollTimer = null;
 const defaultSettings = {
   accent: '#f55f45', accentRgb: '245,95,69', ambient: true,
-  reducedMotion: false, gapless: true, crossfade: 40, volume: 72,
-  muted: false, shuffle: false, repeatMode: 'off', songSort: 'added-desc', dynamicArtByDefault: false,
+  reducedMotion: false, glassEffects:true, highContrast:false, theme:'midnight', uiScale:100, density:'comfortable', cornerStyle:'rounded', albumCardSize:'medium', sidebarWidth:'default', showSidebarPlaylists:true,
+  gapless: true, crossfade: 4, volume: 72, playbackRate:1, preservePitch:true, autoplayNext:true, preloadAudio:true, stopAfterCurrent:false,
+  muted: false, shuffle: false, repeatMode: 'off', songSort: 'added-desc', albumView:'grid', albumFilter:'all', playlistDefaultSort:'manual', confirmDeletes:true, showPendingTracks:true, dynamicArtByDefault: false,
+  onlineMetadata:true, onlineLyrics:true, onlineArtistImages:true, onlineMusicVideos:true,
   sunoEndpoint: 'https://api.apipass.dev', sunoModel: 'V5_5', sunoChannel: 'auto', updateChannel: 'stable', visualizerStyle:'waves'
 };
 let settings = { ...defaultSettings };
@@ -47,7 +49,9 @@ let isPlaying = false;
 let simProgress = 38;
 let simTimer = null;
 let draggedPlaylist = null;
+let draggedPlaylistTrack = null;
 let draggedAlbum = null;
+let settingsTab = 'appearance';
 const selectedTrackIds = new Set();
 const selectedAlbumIds = new Set();
 let trackSelectionAnchor = null;
@@ -93,9 +97,18 @@ function syncShelves() {
 }
 function playlistTracks(playlist) {
   if (!playlist) return [];
-  if (playlist.children) return [...new Map(playlist.children.flatMap(child => playlistTracks(child)).map(track=>[track.id,track])).values()];
+  if (playlist.children) return [...new Map(playlist.children.flatMap(child => sortedPlaylistTracks(child)).map(track=>[track.id,track])).values()];
   const ids = playlist.trackIds || [];
   return ids.map(id => allTracks().find(t => t.id === id)).filter(Boolean);
+}
+function setTrackFavorite(track,value=!track?.favorite){if(!track)return;track.favorite=Boolean(value);saveLibrary();updateFavoriteControl();toast(track.favorite?'Added to favorites':'Removed from favorites',track.title)}
+function updateFavoriteControl(){const button=$('#favoriteTrack');if(!button)return;const active=Boolean(currentTrack?.favorite);button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));button.title=active?'Remove from favorites':'Add to favorites'}
+const playlistSortLabels={manual:'Manual order','title-asc':'Title · A–Z','artist-asc':'Artist · A–Z','album-asc':'Album · A–Z','added-desc':'Recently added','plays-desc':'Most played','duration-asc':'Shortest first'};
+function playlistSortMode(playlist){return playlist?.sortMode||settings.playlistDefaultSort||'manual'}
+function sortedPlaylistTracks(playlist){
+  const tracks=[...playlistTracks(playlist)],mode=playlistSortMode(playlist),collator=new Intl.Collator(undefined,{sensitivity:'base',numeric:true});
+  const sorters={'title-asc':(a,b)=>collator.compare(a.title,b.title)||collator.compare(a.artist,b.artist),'artist-asc':(a,b)=>collator.compare(a.artist,b.artist)||collator.compare(a.title,b.title),'album-asc':(a,b)=>collator.compare(a.album,b.album)||collator.compare(a.title,b.title),'added-desc':(a,b)=>(Number(b.added)||0)-(Number(a.added)||0),'plays-desc':(a,b)=>(Number(b.plays)||0)-(Number(a.plays)||0),'duration-asc':(a,b)=>(Number(a.durationSeconds)||0)-(Number(b.durationSeconds)||0)};
+  return sorters[mode]?tracks.sort(sorters[mode]):tracks;
 }
 function flattenPlaylists(collection=customPlaylists){return collection.flatMap(playlist=>[playlist,...flattenPlaylists(playlist.children||[])])}
 function findPlaylistById(id){return flattenPlaylists().find(playlist=>playlist.id===id)}
@@ -109,7 +122,7 @@ function selectedBulkTracks(){
   return [...tracks.values()];
 }
 function applySelectionClasses(){
-  $$('.album-card[data-album]',view).forEach(card=>card.classList.toggle('bulk-selected',selectedAlbumIds.has(card.dataset.album)));
+  $$('.album-card[data-album],.album-list-row[data-album]',view).forEach(card=>card.classList.toggle('bulk-selected',selectedAlbumIds.has(card.dataset.album)));
   $$('tr[data-track]',view).forEach(row=>row.classList.toggle('bulk-selected',selectedTrackIds.has(row.dataset.track)));
 }
 function renderBulkSelectionBar(){
@@ -196,6 +209,8 @@ function applySavedState(saved = {}) {
   sunoConnected = Boolean(saved.sunoConnected);
   settings = { ...defaultSettings, ...(saved.settings || {}) };
   settings.sunoEndpoint = defaultSettings.sunoEndpoint;
+  if(Number(settings.crossfade)>12)settings.crossfade=4;
+  settings.uiScale=Math.max(85,Math.min(120,Number(settings.uiScale)||100));
   settings.repeatMode = ['off','all','one'].includes(settings.repeatMode) ? settings.repeatMode : 'off';
   settings.visualizerStyle=['waves','orbit','spectrum'].includes(settings.visualizerStyle)?settings.visualizerStyle:'waves';
   visualizerStyle=settings.visualizerStyle;
@@ -206,10 +221,24 @@ function applySavedState(saved = {}) {
 function applySettings() {
   document.documentElement.style.setProperty('--accent', settings.accent);
   document.documentElement.style.setProperty('--accent-rgb', settings.accentRgb);
+  document.documentElement.style.setProperty('--ui-scale',String(settings.uiScale/100));
+  document.documentElement.style.setProperty('--window-controls-offset',`${Math.ceil(168/(settings.uiScale/100))}px`);
+  document.documentElement.dataset.theme=settings.theme;
+  document.documentElement.dataset.density=settings.density;
+  document.documentElement.dataset.corners=settings.cornerStyle;
+  document.documentElement.dataset.albumSize=settings.albumCardSize;
+  document.documentElement.dataset.sidebarWidth=settings.sidebarWidth;
+  document.body.style.zoom=String(settings.uiScale/100);
   $('.ambient').style.display = settings.ambient ? '' : 'none';
   document.documentElement.style.scrollBehavior = settings.reducedMotion ? 'auto' : '';
   document.documentElement.classList.toggle('reduced-motion',Boolean(settings.reducedMotion));
+  document.documentElement.classList.toggle('no-glass',!settings.glassEffects);
+  document.documentElement.classList.toggle('high-contrast',Boolean(settings.highContrast));
+  document.documentElement.classList.toggle('hide-sidebar-playlists',!settings.showSidebarPlaylists);
   audio.volume = settings.muted ? 0 : settings.volume / 100;
+  audio.playbackRate=Math.max(.5,Math.min(2,Number(settings.playbackRate)||1));
+  audio.preservesPitch=Boolean(settings.preservePitch);
+  audio.preload=settings.preloadAudio?'auto':'metadata';
   updatePlaybackModeControls();
   updateVolumeControls();
   updateVisualizerControls();
@@ -365,6 +394,15 @@ function artistPortraitMarkup(name,extra=''){
   const profile=artistProfile(name),style=profile.image?`style="background-image:url(&quot;${esc(profile.image)}&quot;)"`:'';
   return `<div class="artist-portrait ${profile.image?'has-artist-image':artistPortraitClass(name)} ${profile.animated?'animated-artist-image':''} ${extra}" ${style}></div>`;
 }
+async function applyArtistDetailTheme(name){
+  const root=$('.artist-detail[data-artist-detail]',view),source=artistProfile(name).image;if(!root||!source)return;
+  try{
+    const image=await new Promise((resolve,reject)=>{const element=new Image();if(/^https?:/i.test(source))element.crossOrigin='anonymous';element.onload=()=>resolve(element);element.onerror=reject;element.src=source});
+    const canvas=document.createElement('canvas');canvas.width=48;canvas.height=48;const context=canvas.getContext('2d',{willReadFrequently:true});context.drawImage(image,0,0,48,48);const pixels=context.getImageData(0,0,48,48).data,buckets=new Map();
+    for(let index=0;index<pixels.length;index+=16){if(pixels[index+3]<180)continue;const r=pixels[index],g=pixels[index+1],b=pixels[index+2],max=Math.max(r,g,b),min=Math.min(r,g,b),light=(max+min)/510,sat=max===min?0:(max-min)/(255-Math.abs(max+min-255));if(light<.06||light>.92)continue;const key=[r,g,b].map(value=>Math.round(value/32)*32).join(',');buckets.set(key,(buckets.get(key)||0)+.45+sat*2.2)}
+    const colors=[...buckets].sort((a,b)=>b[1]-a[1]).map(([key])=>key.split(',').map(Number));if(!colors.length)return;const primary=colors[0],secondary=colors.find(color=>Math.hypot(color[0]-primary[0],color[1]-primary[1],color[2]-primary[2])>90)||colors[1]||primary,toHex=color=>`#${color.map(value=>Math.max(0,Math.min(255,value)).toString(16).padStart(2,'0')).join('')}`;root.style.setProperty('--artist-primary',toHex(primary));root.style.setProperty('--artist-secondary',toHex(secondary));
+  }catch{/* The deterministic fallback remains when a remote image blocks sampling. */}
+}
 
 function dynamicCaseReady(album) {
   return Boolean(album?.dynamicCaseArt?.enabled && album.dynamicCaseArt?.backgroundUrl && album.dynamicCaseArt?.font?.fileUrl);
@@ -511,14 +549,19 @@ function renderHome(){
 
 function renderAlbums(filter = '') {
   currentView = 'albums';
-  const q = filter.trim().toLowerCase();
-  const shown = albums.filter(a => `${a.title} ${a.artist} ${a.genre}`.toLowerCase().includes(q));
+  const q = filter.trim().toLowerCase(),mode=settings.albumFilter||'all',viewMode=settings.albumView||'grid',recentCutoff=Date.now()-90*24*60*60*1000;
+  let shown = albums.filter(a => `${a.title} ${a.artist} ${a.genre}`.toLowerCase().includes(q));
+  if(mode==='recent')shown=shown.filter(album=>Math.max(...album.tracks.map(track=>Number(track.added)||0),0)>=recentCutoff).sort((a,b)=>Math.max(...b.tracks.map(track=>Number(track.added)||0),0)-Math.max(...a.tracks.map(track=>Number(track.added)||0),0));
+  if(mode==='downloaded')shown=shown.filter(album=>album.tracks.some(track=>Boolean(track.url||track.path)&&!track.pending));
+  if(mode==='favorites')shown=shown.filter(album=>album.favorite||album.tracks.some(track=>track.favorite));
+  const gridMarkup=`<div class="album-grid">${shown.map((a,i)=>`<article class="album-card" data-album="${a.id}" style="animation-delay:${i*35}ms"><div class="album-art-wrap">${albumCover(a)}${dynamicCaseReady(a)?'<span class="dynamic-album-badge">DYNAMIC CASE</span>':''}${a.favorite?'<span class="album-favorite-badge">♥</span>':''}<button class="quick-play" data-play-album="${a.id}" aria-label="Play ${esc(a.title)}">${icon('play')}</button></div><h3>${esc(a.title)}</h3><p>${esc(a.artist)} · ${a.year}</p><button class="more" data-edit-album="${a.id}" aria-label="Edit album">${icon('more')}</button></article>`).join('')}</div>`;
+  const listMarkup=`<div class="album-list-view">${shown.map(a=>`<article class="album-list-row" data-album="${a.id}">${albumCover(a,'album-list-cover')}<span class="album-list-copy"><b>${esc(a.title)}</b><small>${esc(a.artist)} · ${a.year}</small></span><span>${a.tracks.length} tracks</span><span>${esc(a.genre||'Uncategorized')}</span><button class="quick-play" data-play-album="${a.id}" aria-label="Play ${esc(a.title)}">${icon('play')}</button><button class="row-action" data-edit-album="${a.id}" aria-label="Edit album">${icon('more')}</button></article>`).join('')}</div>`;
   view.innerHTML = pageHead('YOUR LIBRARY','Albums',`${albums.length} albums · ${allTracks().length} songs`,
-    `<button class="icon-button active" title="Grid view">${icon('grid')}</button><button class="icon-button" id="listView" title="Song list">${icon('list')}</button>`) +
-    `<div class="filter-row"><button class="chip active">All albums</button><button class="chip">Recently added</button><button class="chip">Downloaded</button><button class="chip">Favorites</button></div>` +
-    (shown.length ? `<div class="album-grid">${shown.map((a,i)=>`<article class="album-card" data-album="${a.id}" style="animation-delay:${i*35}ms"><div class="album-art-wrap">${albumCover(a)}${dynamicCaseReady(a)?'<span class="dynamic-album-badge">DYNAMIC CASE</span>':''}<button class="quick-play" data-play-album="${a.id}" aria-label="Play ${esc(a.title)}">${icon('play')}</button></div><h3>${esc(a.title)}</h3><p>${esc(a.artist)} · ${a.year}</p><button class="more" data-edit-album="${a.id}" aria-label="Edit album">${icon('more')}</button></article>`).join('')}</div>` : `<div class="empty-state">${icon('albums')}<h2>${q?'No albums found':'Your library is ready'}</h2><p>${q?'Try another title, artist, or genre.':'Import music files or a folder to begin building your collection.'}</p>${q?'':`<div class="empty-actions"><button class="primary" data-import="files">${icon('upload')} Import files</button><button class="ghost" data-import="folder">${icon('albums')} Import folder</button></div>`}</div>`);
-  $('#listView')?.addEventListener('click', () => navigate('songs'));
-  $$('.chip', view).forEach(c => c.onclick = () => { $$('.chip',view).forEach(x=>x.classList.remove('active')); c.classList.add('active'); toast(`${c.textContent} filter applied`); });
+    `<button class="icon-button ${viewMode==='grid'?'active':''}" data-album-view="grid" title="Grid view">${icon('grid')}</button><button class="icon-button ${viewMode==='list'?'active':''}" data-album-view="list" title="Album list">${icon('list')}</button>`) +
+    `<div class="filter-row"><button class="chip ${mode==='all'?'active':''}" data-album-filter="all">All albums</button><button class="chip ${mode==='recent'?'active':''}" data-album-filter="recent">Recently added</button><button class="chip ${mode==='downloaded'?'active':''}" data-album-filter="downloaded">Downloaded</button><button class="chip ${mode==='favorites'?'active':''}" data-album-filter="favorites">Favorites</button></div>` +
+    (shown.length ? (viewMode==='list'?listMarkup:gridMarkup) : `<div class="empty-state">${icon('albums')}<h2>${q?'No albums found':mode==='favorites'?'No favorite albums yet':mode==='recent'?'Nothing added recently':'No albums in this view'}</h2><p>${q?'Try another title, artist, or genre.':mode==='favorites'?'Right-click an album or favorite one of its tracks to collect it here.':mode==='recent'?'Albums imported in the last 90 days appear here.':'Try another filter or import more music.'}</p>${!q&&mode==='all'?`<div class="empty-actions"><button class="primary" data-import="files">${icon('upload')} Import files</button><button class="ghost" data-import="folder">${icon('albums')} Import folder</button></div>`:''}</div>`);
+  $$('[data-album-view]',view).forEach(button=>button.onclick=()=>{settings.albumView=button.dataset.albumView;saveLibrary();renderAlbums(filter)});
+  $$('[data-album-filter]',view).forEach(button=>button.onclick=()=>{settings.albumFilter=button.dataset.albumFilter;saveLibrary();renderAlbums(filter)});
   applySelectionClasses();renderBulkSelectionBar();
 }
 
@@ -565,8 +608,9 @@ function renderAlbumDetail(id){
 }
 function renderArtistDetail(name){
   const artistAlbums=albums.filter(album=>album.artist===name);if(!artistAlbums.length){navigate('artists',{record:false});return}
-  const tracks=artistAlbums.flatMap(album=>album.tracks),profile=artistProfile(name);
-  view.innerHTML=`<section class="entity-detail artist-detail"><button class="detail-back" data-detail-back>${icon('prev')} All artists</button><div class="artist-detail-hero" data-artist="${esc(name)}" ${profile.image?`style="--artist-hero:url(&quot;${esc(profile.image)}&quot;)"`:''}><div class="artist-hero-glow"></div>${artistPortraitMarkup(name,'artist-portrait-large')}<div class="artist-detail-copy"><div class="eyebrow">ARTIST</div><h1>${esc(name)}</h1><p>${artistAlbums.length} album${artistAlbums.length===1?'':'s'} · ${tracks.length} song${tracks.length===1?'':'s'}${profile.sourceUrl?` · <a href="${esc(profile.sourceUrl)}" target="_blank" rel="noreferrer">Image source</a>`:''}</p><div class="detail-actions"><button class="primary" data-artist-play>${icon('play')} Play</button><button class="ghost" data-artist-shuffle>${icon('shuffle')} Shuffle</button><button class="ghost" data-artist-image>${icon('image')} ${profile.image?'Change image':'Add image'}</button></div></div></div><section class="artist-albums"><div class="section-heading"><div><div class="eyebrow">DISCOGRAPHY</div><h2>Albums</h2></div></div><div class="album-grid">${artistAlbums.map((album,index)=>`<article class="album-card" data-album="${album.id}" style="animation-delay:${index*35}ms"><div class="album-art-wrap">${albumCover(album)}${dynamicCaseReady(album)?'<span class="dynamic-album-badge">DYNAMIC CASE</span>':''}<button class="quick-play" data-play-album="${album.id}" aria-label="Play ${esc(album.title)}">${icon('play')}</button></div><h3>${esc(album.title)}</h3><p>${album.year} · ${album.tracks.length} tracks</p><button class="more" data-edit-album="${album.id}" aria-label="Edit album">${icon('more')}</button></article>`).join('')}</div></section><section class="detail-track-section"><div><div class="eyebrow">ALL SONGS</div><h2>Popular tracks</h2></div>${songTable([...tracks].sort((a,b)=>(b.plays||0)-(a.plays||0)))}</section></section>`;
+  const tracks=artistAlbums.flatMap(album=>album.tracks),profile=artistProfile(name),fallback=albumDetailPalettes[playlistCoverHash(name)%albumDetailPalettes.length];
+  view.innerHTML=`<section class="entity-detail artist-detail ${profile.image?'has-artist-theme':'generated-artist-theme'}" data-artist-detail="${esc(name)}" style="--artist-primary:${fallback[0]};--artist-secondary:${fallback[1]};${profile.image?`--artist-page-image:url(&quot;${esc(profile.image)}&quot;);`:''}"><span class="artist-detail-atmosphere" aria-hidden="true"></span><button class="detail-back" data-detail-back>${icon('prev')} All artists</button><div class="artist-detail-hero" data-artist="${esc(name)}" ${profile.image?`style="--artist-hero:url(&quot;${esc(profile.image)}&quot;)"`:''}><div class="artist-hero-glow"></div>${artistPortraitMarkup(name,'artist-portrait-large')}<div class="artist-detail-copy"><div class="eyebrow">ARTIST</div><h1>${esc(name)}</h1><p>${artistAlbums.length} album${artistAlbums.length===1?'':'s'} · ${tracks.length} song${tracks.length===1?'':'s'}${profile.sourceUrl?` · <a href="${esc(profile.sourceUrl)}" target="_blank" rel="noreferrer">Image source</a>`:''}</p><div class="detail-actions"><button class="primary" data-artist-play>${icon('play')} Play</button><button class="ghost" data-artist-shuffle>${icon('shuffle')} Shuffle</button><button class="ghost" data-artist-image>${icon('image')} ${profile.image?'Change image':'Add image'}</button></div></div></div><section class="artist-albums"><div class="section-heading"><div><div class="eyebrow">DISCOGRAPHY</div><h2>Albums</h2></div></div><div class="album-grid">${artistAlbums.map((album,index)=>`<article class="album-card" data-album="${album.id}" style="animation-delay:${index*35}ms"><div class="album-art-wrap">${albumCover(album)}${dynamicCaseReady(album)?'<span class="dynamic-album-badge">DYNAMIC CASE</span>':''}<button class="quick-play" data-play-album="${album.id}" aria-label="Play ${esc(album.title)}">${icon('play')}</button></div><h3>${esc(album.title)}</h3><p>${album.year} · ${album.tracks.length} tracks</p><button class="more" data-edit-album="${album.id}" aria-label="Edit album">${icon('more')}</button></article>`).join('')}</div></section><section class="detail-track-section artist-themed-tracklist"><div><div class="eyebrow">ALL SONGS</div><h2>Popular tracks</h2></div>${songTable([...tracks].sort((a,b)=>(b.plays||0)-(a.plays||0)))}</section></section>`;
+  applyArtistDetailTheme(name);
   $('[data-detail-back]').onclick=()=>navigate('artists');
   $('[data-artist-play]').onclick=()=>playTrackQueue(tracks);
   $('[data-artist-shuffle]').onclick=()=>playTrackQueue(tracks,true);
@@ -590,10 +634,11 @@ function renderSongs(filter = '') {
   if($('#songSort'))$('#songSort').onchange=e=>{settings.songSort=e.target.value;saveLibrary();renderSongs(filter)};
   applySelectionClasses();renderBulkSelectionBar();
 }
-function songTable(tracks) {
+function songTable(tracks,{draggable=false,playlistId=''}={}) {
+  tracks=settings.showPendingTracks?tracks:tracks.filter(track=>!track.pending);
   return `<table class="song-table"><thead><tr><th>#</th><th>TITLE</th><th>ALBUM</th><th>PLAYS</th><th>TIME</th><th></th></tr></thead><tbody>${tracks.map((t,i)=>{
     const a=albumById(t.albumId)||{cover:'cover-8'};
-    return `<tr class="${t.pending?'pending-row':''}" data-track="${t.id}"><td>${t.pending?'—':i+1}</td><td><div class="song-title"><div class="thumb ${a.cover}" ${a.customCover?`style="background-image:url('${a.customCover}');background-size:cover"`:''}></div><span><b>${esc(t.title)}</b><small>${esc(t.artist)}</small></span>${t.pending?'<i class="pending-badge">PENDING</i>':''}</div></td><td>${esc(t.album)}</td><td>${t.pending?'—':t.plays}</td><td>${t.pending?'—':t.duration}</td><td><button class="row-action" data-row-action="${t.id}">${icon('more')}</button></td></tr>`;
+    return `<tr class="${t.pending?'pending-row':''} ${draggable?'playlist-draggable-track':''}" data-track="${t.id}" ${draggable?`draggable="true" data-playlist-track="${t.id}" data-playlist-id="${playlistId}"`:''}><td>${draggable?`<span class="playlist-track-grip" title="Drag to reorder">⋮⋮</span>`:''}${t.pending?'—':i+1}</td><td><div class="song-title"><div class="thumb ${a.cover}" ${a.customCover?`style="background-image:url('${a.customCover}');background-size:cover"`:''}></div><span><b>${esc(t.title)}</b><small>${esc(t.artist)}</small></span>${t.pending?'<i class="pending-badge">PENDING</i>':''}</div></td><td>${esc(t.album)}</td><td>${t.pending?'—':t.plays}</td><td>${t.pending?'—':t.duration}</td><td><button class="row-action" data-row-action="${t.id}">${icon('more')}</button></td></tr>`;
   }).join('')}</tbody></table>`;
 }
 
@@ -633,19 +678,30 @@ function openPlaylist(id,record=true) {
   if(record&&currentView!==`playlist:${id}`){viewBackStack.push(currentView);viewForwardStack=[];clearBulkSelection()}
   currentView = `playlist:${id}`;
   $$('#primaryNav button,.sidebar-bottom button').forEach(btn=>btn.classList.toggle('active',btn.dataset.view==='playlists'));
-  const tracks = playlistTracks(playlist);
+  const tracks = sortedPlaylistTracks(playlist),sortMode=playlistSortMode(playlist);
   const subPlaylistList=playlist.children?`<section class="master-subplaylists"><div class="section-heading"><div><span class="eyebrow">INSIDE THIS MASTER</span><h2>Sub-playlists</h2></div><small>${playlist.children.length} collection${playlist.children.length===1?'':'s'}</small></div><div class="master-subplaylist-list">${playlist.children.map((child,index)=>{const childTracks=playlistTracks(child),playable=childTracks.some(track=>!track.pending);return `<article class="master-subplaylist" style="--sub-color:${child.color||playlist.color||'var(--accent)'}"><button class="subplaylist-main" data-open-subplaylist="${child.id}"><span class="subplaylist-number">${String(index+1).padStart(2,'0')}</span><span class="subplaylist-icon">${child.children?'◫':'♫'}</span><span><b>${esc(child.title)}</b><small>${childTracks.length} songs${child.children?` · ${child.children.length} nested playlists`:''}</small></span></button><button class="subplaylist-play" data-play-subplaylist="${child.id}" aria-label="Play ${esc(child.title)}" ${playable?'':'disabled'}>${icon('play')}</button></article>`}).join('')}</div></section>`:'';
-  const trackList=tracks.length?`${playlist.children?`<div class="master-track-heading"><span class="eyebrow">COMPLETE MASTER PLAYLIST</span><h2>All tracks</h2></div>`:''}${songTable(tracks)}`:`<div class="empty-state">${icon('song')}<h2>This playlist is empty</h2><p>Import tracks directly into a sub-playlist, or add tracks from their right-click menu.</p></div>`;
-  view.innerHTML = `<button class="ghost" id="backToPlaylists" style="margin-bottom:18px">‹ ${parent?esc(parent.title):'All playlists'}</button><div class="playlist-detail-head">${playlistCoverMarkup(playlist,'playlist-detail-cover')}<div><div class="eyebrow">${playlist.children?'MASTER PLAYLIST':'PLAYLIST'}</div><h1>${esc(playlist.title)}</h1><p>${tracks.length} songs${playlist.children?` · ${playlist.children.length} sub-playlists`:''}</p></div></div><div class="playlist-detail-actions"><button class="primary" id="playPlaylist">${icon('play')} ${playlist.children?'Play All':'Play'}</button><button class="ghost" id="shufflePlaylist">${icon('shuffle')} Shuffle</button><button class="ghost" id="customizePlaylistCover">${icon('image')} Customize cover</button>${playlist.children?'':`<button class="ghost" id="addPlaylistTracks">${icon('plus')} Add imported tracks</button>`}</div>${subPlaylistList}${trackList}`;
+  const trackList=tracks.length?`${playlist.children?`<div class="master-track-heading"><span class="eyebrow">COMPLETE MASTER PLAYLIST</span><h2>All tracks</h2></div>`:''}${songTable(tracks,{draggable:!playlist.children,playlistId:id})}`:`<div class="empty-state">${icon('song')}<h2>This playlist is empty</h2><p>Import tracks directly into a sub-playlist, or add tracks from their right-click menu.</p></div>`;
+  view.innerHTML = `<button class="ghost" id="backToPlaylists" style="margin-bottom:18px">‹ ${parent?esc(parent.title):'All playlists'}</button><div class="playlist-detail-head">${playlistCoverMarkup(playlist,'playlist-detail-cover')}<div><div class="eyebrow">${playlist.children?'MASTER PLAYLIST':'PLAYLIST'}</div><h1>${esc(playlist.title)}</h1><p>${tracks.length} songs${playlist.children?` · ${playlist.children.length} sub-playlists`:''}</p></div></div><div class="playlist-detail-actions"><button class="primary" id="playPlaylist">${icon('play')} ${playlist.children?'Play All':'Play'}</button><button class="ghost" id="shufflePlaylist">${icon('shuffle')} Shuffle</button><label class="playlist-sort-control"><span>Sort</span><select id="playlistSort">${Object.entries(playlistSortLabels).map(([value,label])=>`<option value="${value}" ${sortMode===value?'selected':''}>${label}</option>`).join('')}</select></label><button class="ghost" id="customizePlaylistCover">${icon('image')} Customize cover</button>${playlist.children?'':`<button class="ghost" id="addPlaylistTracks">${icon('plus')} Add imported tracks</button>`}</div>${subPlaylistList}${trackList}`;
   $('#backToPlaylists').onclick=()=>parent?historyBack():navigate('playlists');
-  $('#playPlaylist').onclick=()=>playTrackQueue(tracks);
+  $('#playPlaylist').onclick=()=>playTrackQueue(tracks,false);
   $('#shufflePlaylist').onclick=()=>playTrackQueue(tracks,true);
+  $('#playlistSort').onchange=event=>{playlist.sortMode=event.target.value;saveLibrary();openPlaylist(id,false);toast('Playlist sorted',playlistSortLabels[playlist.sortMode])};
   $('#customizePlaylistCover').onclick=()=>playlistCoverStudio(id);
   $$('[data-open-subplaylist]',view).forEach(button=>button.onclick=()=>openPlaylist(button.dataset.openSubplaylist));
-  $$('[data-play-subplaylist]',view).forEach(button=>button.onclick=event=>{event.stopPropagation();playTrackQueue(playlistTracks(findPlaylistById(button.dataset.playSubplaylist)))});
+  $$('[data-play-subplaylist]',view).forEach(button=>button.onclick=event=>{event.stopPropagation();playTrackQueue(sortedPlaylistTracks(findPlaylistById(button.dataset.playSubplaylist)),false)});
   if($('#addPlaylistTracks'))$('#addPlaylistTracks').onclick=()=>{playlistImportTarget=id;chooseFiles()};
+  if(!playlist.children)bindPlaylistTrackDrag(playlist,tracks);
   applySelectionClasses();renderBulkSelectionBar();
   updateHistoryControls();
+}
+function bindPlaylistTrackDrag(playlist,visibleTracks){
+  $$('[data-playlist-track]',view).forEach(row=>{
+    row.addEventListener('dragstart',event=>{draggedPlaylistTrack=row.dataset.playlistTrack;row.classList.add('dragging');event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',draggedPlaylistTrack)});
+    row.addEventListener('dragend',()=>{draggedPlaylistTrack=null;row.classList.remove('dragging');$$('.playlist-track-drop-target',view).forEach(item=>item.classList.remove('playlist-track-drop-target'))});
+    row.addEventListener('dragover',event=>{event.preventDefault();event.dataTransfer.dropEffect='move';if(row.dataset.playlistTrack!==draggedPlaylistTrack)row.classList.add('playlist-track-drop-target')});
+    row.addEventListener('dragleave',()=>row.classList.remove('playlist-track-drop-target'));
+    row.addEventListener('drop',event=>{event.preventDefault();const targetId=row.dataset.playlistTrack;if(!draggedPlaylistTrack||draggedPlaylistTrack===targetId)return;const currentMode=playlistSortMode(playlist);if(currentMode!=='manual'){const visibleIds=visibleTracks.map(track=>track.id),remaining=(playlist.trackIds||[]).filter(id=>!visibleIds.includes(id));playlist.trackIds=[...visibleIds,...remaining];playlist.sortMode='manual'}const from=playlist.trackIds.indexOf(draggedPlaylistTrack),to=playlist.trackIds.indexOf(targetId);if(from<0||to<0)return;const[moved]=playlist.trackIds.splice(from,1);playlist.trackIds.splice(to,0,moved);saveLibrary();openPlaylist(playlist.id,false);toast('Playlist order updated',currentMode==='manual'?'Manual order saved':'Switched to manual order')});
+  });
 }
 
 function renamePlaylist(id) {
@@ -697,6 +753,7 @@ function playlistCoverStudio(id) {
 }
 
 function confirmRemove(title, detail, action) {
+  if(!settings.confirmDeletes){action();return}
   openModal(`<div class="modal-head"><h2>${esc(title)}</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><p style="color:#98938d;margin:0">${esc(detail)}</p></div><div class="modal-actions"><button class="ghost close-modal">Cancel</button><button class="primary" id="confirmRemove" style="background:#e55f4c;color:white">Remove</button></div>`,true);
   $('#confirmRemove').onclick=()=>{action();closeModal()};
 }
@@ -715,7 +772,7 @@ function playlistContext(id, x, y) {
   const playlist=findPlaylistById(id);if(!playlist)return;
   showContextMenu([
     {label:'Open playlist',icon:'playlist',action:()=>openPlaylist(id)},
-    {label:'Play',icon:'play',action:()=>playTrackQueue(playlistTracks(playlist))},
+    {label:'Play',icon:'play',action:()=>playTrackQueue(sortedPlaylistTracks(playlist),false)},
     {label:'Customize cover',icon:'image',action:()=>playlistCoverStudio(id)},
     {label:'Rename',icon:'settings',action:()=>renamePlaylist(id)},
     {separator:true},
@@ -730,6 +787,7 @@ function albumContext(id,x,y) {
     {label:'Play album',icon:'play',action:()=>playTrackQueue(album.tracks)},
     {label:'Play next',icon:'next',action:()=>queueTracksNext(album.tracks,album.title)},
     {label:'Add album to playlist',icon:'playlist',action:()=>addAlbumToPlaylist(album)},
+    {label:album.favorite?'Remove album favorite':'Favorite album',icon:'spark',action:()=>{album.favorite=!album.favorite;saveLibrary();render();toast(album.favorite?'Album favorited':'Album unfavorited',album.title)}},
     {label:'Edit album',icon:'settings',action:()=>editAlbum(id)},
     {label:'Pull metadata & art',icon:'spark',action:()=>metadataLookup(album)},
     {label:'Find full case art',icon:'image',action:()=>caseArtLookup(album)},
@@ -783,8 +841,9 @@ async function searchWikimediaArtistImages(name){
     return pictured.map(item=>{const info=byFile.get(item.file.replaceAll('_',' '));return info?{...item,image:info.thumburl||info.url,sourceUrl:info.descriptionurl||`https://commons.wikimedia.org/wiki/File:${encodeURIComponent(item.file.replaceAll(' ','_'))}`,sourceLabel:'Wikimedia Commons'} : null}).filter(item=>item?.image).slice(0,6);
 }
 async function artistImageLookup(name,animatedOnly=false){
+  if(!settings.onlineArtistImages){toast('Artist-image lookup is disabled','Enable it under Settings · Privacy & control.');return}
   openModal(`<div class="modal-head"><h2>${animatedOnly?'Finding animated artist GIFs':'Finding artist images'}</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><div class="lookup-status"><span class="spinner"></span><span>${animatedOnly?'Searching Wikimedia Commons for reusable animated GIFs':'Searching Wikimedia Commons, Deezer, TheAudioDB, and animated GIF sources'} for ${esc(name)}…</span></div></div>`);
-  const searches=await Promise.allSettled([...(animatedOnly?[]:[searchWikimediaArtistImages(name)]),window.firefly?.searchArtistImages?window.firefly.searchArtistImages(name):Promise.resolve([])]);
+  const searches=await Promise.allSettled([...(animatedOnly?[]:[searchWikimediaArtistImages(name)]),window.firefly?.searchArtistImages?window.firefly.searchArtistImages(name,{animatedOnly}):Promise.resolve([])]);
   const combined=searches.flatMap(result=>result.status==='fulfilled'?result.value:[]),seen=new Set();
   const results=combined.filter(result=>{if(!result?.image||(animatedOnly&&!result.animated))return false;const key=String(result.image).replace(/^https?:/,'').replace(/[?#].*$/,'').toLowerCase();if(seen.has(key))return false;seen.add(key);return true}).slice(0,15);
   if(!results.length){openModal(`<div class="modal-head"><h2>No ${animatedOnly?'animated GIF':'artist image'} found</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><p class="modal-intro">No reusable ${animatedOnly?'animated artist GIFs':'artist images'} were found for ${esc(name)}. Try a shorter or alternate artist name.</p></div><div class="modal-actions"><button class="ghost close-modal">Close</button><button class="primary" id="retryArtistImage">Try again</button></div>`,true);$('#retryArtistImage').onclick=()=>artistImageLookup(name,animatedOnly);return}
@@ -804,6 +863,7 @@ function trackContext(track,x,y) {
     {label:'Play',icon:'play',action:()=>playTrack(track)},
     {label:'Play next',icon:'next',action:()=>queueTracksNext([track],track.title)},
     {label:'Add to playlist',icon:'playlist',action:()=>addTrackToPlaylist(track)},
+    {label:track.favorite?'Remove from favorites':'Add to favorites',icon:'spark',action:()=>setTrackFavorite(track)},
     {label:'Edit track',icon:'settings',action:()=>showTrackMenu(track)},
     {separator:true},
     {label:'Remove from library',icon:'close',danger:true,action:()=>confirmRemove('Remove track?',`“${track.title}” will be removed from Firefly. The source file stays untouched.`,()=>{const album=albumById(track.albumId);if(album)album.tracks=album.tracks.filter(t=>t.id!==track.id);customPlaylists.forEach(p=>removePlaylistTrackReferences(p,new Set([track.id])));albums=albums.filter(a=>a.tracks.length||a.id!=='loose-files');saveLibrary();render();toast('Track removed')})}
@@ -823,33 +883,42 @@ function nowPlayingContext(x,y) {
   ],x,y);
 }
 
+function settingToggle(key,title,description){return `<div class="setting-row"><div><b>${title}</b><small>${description}</small></div><button class="switch ${settings[key]?'on':''}" data-setting-toggle="${key}" aria-pressed="${Boolean(settings[key])}"></button></div>`}
+function settingSelect(key,title,description,options){return `<div class="setting-row"><div><b>${title}</b><small>${description}</small></div><select data-setting-select="${key}">${options.map(([value,label])=>`<option value="${value}" ${String(settings[key])===String(value)?'selected':''}>${label}</option>`).join('')}</select></div>`}
+function settingRange(key,title,description,min,max,step=1,suffix=''){return `<div class="setting-row"><div><b>${title}</b><small>${description}</small></div><span class="setting-range"><input type="range" min="${min}" max="${max}" step="${step}" value="${settings[key]}" data-setting-range="${key}" style="--range:${(Number(settings[key])-min)/(max-min)*100}%"><output>${settings[key]}${suffix}</output></span></div>`}
+function updateStatusText(){return updateState.status==='available'?`Version ${esc(updateState.version)} is available`:updateState.status==='error'?esc(updateState.error||'Update check failed'):updateState.status==='checking'?'Checking GitHub now…':updateState.status==='downloading'?'Downloading in the background…':updateState.status==='installing'?'Verifying and preparing…':updateState.status==='ready'?'Ready · restart to apply':'Firefly checks when it opens and every 30 minutes'}
+function settingsPanelMarkup(tab){
+  if(tab==='appearance')return `<header><span class="eyebrow">APPEARANCE</span><h2>Shape the entire interface</h2><p>Color, scale, spacing, surfaces, and motion update immediately.</p></header>
+    <div class="settings-section"><h3>Color & surfaces</h3><div class="setting-row"><div><b>Accent color</b><small>Used for actions, progress, focus, and ambient light</small></div><span class="accent-swatches"><button class="${settings.accent==='#f55f45'?'active':''}" data-accent="#f55f45" data-rgb="245,95,69" style="--swatch:#f55f45"></button><button class="${settings.accent==='#9b7bff'?'active':''}" data-accent="#9b7bff" data-rgb="155,123,255" style="--swatch:#9b7bff"></button><button class="${settings.accent==='#53d6b6'?'active':''}" data-accent="#53d6b6" data-rgb="83,214,182" style="--swatch:#53d6b6"></button><button class="${settings.accent==='#f2b84b'?'active':''}" data-accent="#f2b84b" data-rgb="242,184,75" style="--swatch:#f2b84b"></button><label class="custom-accent" title="Custom accent"><input id="customAccent" type="color" value="${settings.accent}"></label></span></div>${settingSelect('theme','Base theme','Choose the darkness and warmth of Firefly’s canvas',[['midnight','Midnight'],['oled','OLED black'],['charcoal','Warm charcoal']])}${settingToggle('glassEffects','Liquid glass effects','Blur and translucency across panels, menus, and navigation')}${settingToggle('ambient','Animated background','Slow reactive color fields across the app')}${settingToggle('highContrast','High contrast','Stronger borders, text, and control separation')}</div>
+    <div class="settings-section"><h3>Layout & scale</h3>${settingRange('uiScale','Interface scale','Scale the entire application without changing Windows display settings',85,120,5,'%')}${settingSelect('density','Content density','Adjust padding and row height throughout the library',[['compact','Compact'],['comfortable','Comfortable'],['spacious','Spacious']])}${settingSelect('cornerStyle','Corner style','Control the shape language used across cards and panels',[['square','Subtle'],['rounded','Rounded'],['soft','Extra soft']])}${settingSelect('sidebarWidth','Sidebar width','Give navigation more room or preserve library space',[['compact','Compact'],['default','Default'],['wide','Wide']])}${settingSelect('albumCardSize','Album card size','Choose how many covers fit on screen',[['small','Small'],['medium','Medium'],['large','Large']])}${settingToggle('showSidebarPlaylists','Sidebar playlist previews','Show recent playlists beneath the main navigation')}${settingToggle('reducedMotion','Reduced motion','Minimize navigation, artwork, shelf, and logo animation')}</div>`;
+  if(tab==='playback')return `<header><span class="eyebrow">PLAYBACK</span><h2>Audio, queue, and transport</h2><p>Set the behavior Firefly uses whenever a collection starts.</p></header>
+    <div class="settings-section"><h3>Audio</h3>${settingRange('volume','Current volume','Sets and remembers the player’s master volume',0,100,1,'%')}${settingRange('playbackRate','Playback speed','Applies to local audio while preserving pitch when enabled',.5,2,.05,'×')}${settingToggle('preservePitch','Preserve pitch','Keep vocals and instruments natural when changing speed')}${settingToggle('gapless','Gapless playback','Preload local tracks and advance without an intentional pause')}${settingRange('crossfade','Transition fade','Gently fade the final seconds before advancing',0,12,1,' sec')}${settingToggle('preloadAudio','Preload audio','Prepare local audio ahead of playback for quicker starts')}</div>
+    <div class="settings-section"><h3>Queue behavior</h3>${settingToggle('autoplayNext','Automatically play next','Advance through the active album, artist, or playlist')}${settingToggle('stopAfterCurrent','Stop after current track','A one-time sleep timer that turns itself off after stopping')}${settingToggle('shuffle','Shuffle mode','Start newly selected collections in shuffled order')}${settingSelect('repeatMode','Repeat mode','Choose the persistent repeat behavior',[['off','Off'],['all','Repeat queue'],['one','Repeat current track']])}${settingSelect('visualizerStyle','Default visualizer','Opens fullscreen playback with this visual style',[['waves','Aurora waves'],['orbit','Pulse orbit'],['spectrum','Prism spectrum']])}</div>`;
+  if(tab==='library')return `<header><span class="eyebrow">LIBRARY</span><h2>Organize imports and collections</h2><p>Choose default views, sorting, safeguards, and automatic artwork behavior.</p></header>
+    <div class="settings-section"><h3>Default organization</h3>${settingSelect('songSort','Song-list sorting','Default order used on the Songs screen',[['plays-desc','Most played'],['plays-asc','Least played'],['added-desc','Last added'],['added-asc','First added'],['title-asc','Song A–Z'],['artist-asc','Artist A–Z']])}${settingSelect('albumView','Album presentation','Default layout for the Albums screen',[['grid','Artwork grid'],['list','Detailed list']])}${settingSelect('albumFilter','Album filter','The Albums screen remembers this collection filter',[['all','All albums'],['recent','Recently added'],['downloaded','Downloaded'],['favorites','Favorites']])}${settingSelect('playlistDefaultSort','New playlist sorting','Used until an individual playlist chooses another order',Object.entries(playlistSortLabels))}${settingToggle('showPendingTracks','Show pending tracks','Keep screenshot-import placeholders visible in playlist tables')}${settingToggle('confirmDeletes','Confirm destructive actions','Ask before removing tracks, albums, artists, playlists, or shelves')}</div>
+    <div class="settings-section"><h3>Imports & artwork</h3>${settingToggle('dynamicArtByDefault','Dynamic Case Art for new albums','Automatically extend imported covers into coordinated back and spine artwork')}<div class="setting-row"><div><b>Live folders</b><small>${liveFolders.length?`${liveFolders.length} watched folder${liveFolders.length===1?'':'s'} · ${liveFolders.reduce((sum,folder)=>sum+(Number(folder.trackCount)||0),0)} synced tracks`:'Continuously mirror music folders into your library'}</small></div><button class="ghost" id="manageLiveFolders">${liveFolders.length?'Manage folders':'Add live folder'}</button></div><div class="setting-row"><div><b>Firefly data folder</b><small>${esc(dataDirectory||'Browser local storage')}</small></div><button class="ghost" id="openDataFolder" ${dataDirectory?'':'disabled'}>Open folder</button></div></div>`;
+  if(tab==='integrations')return `<header><span class="eyebrow">INTEGRATIONS</span><h2>Connected creative services</h2><p>Credentials are encrypted by Windows and stored outside the application installation.</p></header>
+    <div class="settings-section"><h3>Creative tools</h3><div class="setting-row"><div><b>OpenAI API key</b><small>Used only for AI video and Dynamic Case Art generation</small></div><input id="openaiKey" type="password" value="${esc(credentials.openaiKey)}" placeholder="Not connected" autocomplete="off"></div><div class="setting-row"><div><b>ApiPass · Suno</b><small>Generate with Suno and import completed tracks into Firefly</small></div><button class="ghost" id="connectSuno">${sunoConnected?'Manage connection':'Connect ApiPass'}</button></div></div>
+    <div class="settings-section"><h3>Updates</h3><div class="setting-row update-setting-row"><div><b>Update channel</b><small>Stable follows main; Test follows the beta branch</small></div><span class="update-setting-controls"><select id="updateChannel"><option value="stable" ${settings.updateChannel!=='beta'?'selected':''}>Stable · main</option><option value="beta" ${settings.updateChannel==='beta'?'selected':''}>Test · beta</option></select><button class="ghost" id="checkForUpdates">Check now</button></span></div><div class="setting-row"><div><b>Update status</b><small>${updateStatusText()}</small></div><button class="ghost" id="showUpdateDetails">Details</button></div></div>`;
+  return `<header><span class="eyebrow">PRIVACY & CONTROL</span><h2>Decide what can go online</h2><p>Your library and listening history remain local. These switches control optional lookups.</p></header>
+    <div class="settings-section"><h3>Online discovery</h3>${settingToggle('onlineMetadata','Metadata and cover lookup','Allow MusicBrainz and Cover Art Archive searches')}${settingToggle('onlineLyrics','Lyrics lookup','Allow plain and time-synchronized LRCLIB searches')}${settingToggle('onlineArtistImages','Artist-image and GIF lookup','Allow Wikimedia, Deezer, TheAudioDB, GIPHY, and Tenor searches')}${settingToggle('onlineMusicVideos','Existing music-video lookup','Search video platforms before any AI generation')}</div>
+    <div class="settings-section"><h3>Local data</h3><div class="setting-row"><div><b>Analytics and telemetry</b><small>Firefly does not send listening analytics or usage telemetry</small></div><span class="privacy-status"><i></i>Always off</span></div><div class="setting-row"><div><b>Saved data location</b><small>${esc(dataDirectory||'Browser local storage')}</small></div><button class="ghost" id="openDataFolder" ${dataDirectory?'':'disabled'}>Open folder</button></div><div class="setting-row"><div><b>Reset preferences</b><small>Restore interface, playback, and library defaults without deleting music</small></div><button class="ghost danger" id="resetSettings">Reset settings</button></div></div>`;
+}
+
 function renderSettings() {
-  view.innerHTML = pageHead('MAKE IT YOURS','Settings','Tune the player, appearance, library, and connected services.') + `<div class="settings-grid"><nav class="settings-menu"><button class="active">Appearance</button><button>Playback</button><button>Library</button><button>Integrations</button><button>Privacy</button></nav><section class="settings-panel"><h2>Appearance & integrations</h2><p>Customize Firefly down to the smallest detail. Changes apply instantly.</p>
-    <div class="setting-row"><div><b>Accent color</b><small>Used for actions, progress, and ambient light</small></div><span class="accent-swatches"><button class="${settings.accent==='#f55f45'?'active':''}" data-accent="#f55f45" data-rgb="245,95,69" style="--swatch:#f55f45"></button><button class="${settings.accent==='#9b7bff'?'active':''}" data-accent="#9b7bff" data-rgb="155,123,255" style="--swatch:#9b7bff"></button><button class="${settings.accent==='#53d6b6'?'active':''}" data-accent="#53d6b6" data-rgb="83,214,182" style="--swatch:#53d6b6"></button><button class="${settings.accent==='#f2b84b'?'active':''}" data-accent="#f2b84b" data-rgb="242,184,75" style="--swatch:#f2b84b"></button></span></div>
-    <div class="setting-row"><div><b>Animated background</b><small>Slow reactive color fields across the app</small></div><button class="switch ${settings.ambient?'on':''}" data-toggle="ambient" aria-label="Toggle animated background"></button></div>
-    <div class="setting-row"><div><b>Reduced motion</b><small>Minimize shelf, artwork, and navigation effects</small></div><button class="switch ${settings.reducedMotion?'on':''}" data-toggle="motion" aria-label="Toggle reduced motion"></button></div>
-    <div class="setting-row"><div><b>Metadata provider</b><small>MusicBrainz with Cover Art Archive fallback</small></div><select><option>MusicBrainz + CAA</option><option>Discogs</option><option>Custom provider</option></select></div>
-    <div class="setting-row"><div><b>OpenAI API key</b><small>Encrypted with Windows and kept outside the app installation</small></div><input id="openaiKey" type="password" value="${esc(credentials.openaiKey)}" placeholder="Not connected" autocomplete="off"/></div>
-    <div class="setting-row"><div><b>ApiPass · Suno</b><small>Generate with Suno V5.5 and import completed tracks into Firefly</small></div><button class="ghost" id="connectSuno">${sunoConnected?'Manage connection':'Connect ApiPass'}</button></div>
-    <div class="setting-row"><div><b>Gapless playback</b><small>Remove silence between supported tracks</small></div><button class="switch ${settings.gapless?'on':''}" data-toggle="gapless"></button></div>
-    <div class="setting-row"><div><b>Dynamic Case Art for new albums</b><small>Automatically extend newly imported cover art into a generated back and spine. Requires your OpenAI API key.</small></div><button class="switch ${settings.dynamicArtByDefault?'on':''}" data-toggle="dynamic-default" aria-label="Toggle Dynamic Case Art for new albums"></button></div>
-    <div class="setting-row"><div><b>Live folders</b><small>${liveFolders.length?`${liveFolders.length} watched folder${liveFolders.length===1?'':'s'} · ${liveFolders.reduce((sum,folder)=>sum+(Number(folder.trackCount)||0),0)} synced tracks`:'Continuously mirror music folders into your library'}</small></div><button class="ghost" id="manageLiveFolders">${liveFolders.length?'Manage':'Add folder'}</button></div>
-    <div class="setting-row"><div><b>Audio crossfade</b><small>Blend the final seconds into the next track</small></div><input id="crossfadeSetting" type="range" value="${settings.crossfade}" style="width:170px;--range:${settings.crossfade}%"/></div>
-    <div class="setting-row update-setting-row"><div><b>Update channel</b><small>Stable follows main; Test follows the beta branch</small></div><span class="update-setting-controls"><select id="updateChannel"><option value="stable" ${settings.updateChannel!=='beta'?'selected':''}>Stable · main</option><option value="beta" ${settings.updateChannel==='beta'?'selected':''}>Test · beta</option></select><button class="ghost" id="checkForUpdates">Check now</button></span></div>
-    <div class="setting-row"><div><b>Update status</b><small>${updateState.status==='available'?`Version ${esc(updateState.version)} is available`:updateState.status==='error'?esc(updateState.error||'Update check failed'):updateState.status==='checking'?'Checking GitHub now…':updateState.status==='downloading'?'Downloading in the background…':updateState.status==='installing'?'Verifying and preparing…':updateState.status==='ready'?'Ready · restart to apply':'Firefly checks when it opens and every 30 minutes'}</small></div><button class="ghost" id="showUpdateDetails">Details</button></div>
-    <div class="setting-row"><div><b>Firefly data folder</b><small>${esc(dataDirectory||'Browser local storage')}</small></div><button class="ghost" id="openDataFolder" ${dataDirectory?'':'disabled'}>Open folder</button></div>
-  </section></div>`;
-  $$('.accent-swatches button',view).forEach(btn=>btn.onclick=()=>{settings.accent=btn.dataset.accent;settings.accentRgb=btn.dataset.rgb;applySettings();$$('.accent-swatches button').forEach(b=>b.classList.remove('active'));btn.classList.add('active');saveLibrary();toast('Accent updated')});
-  $$('.switch',view).forEach(btn=>btn.onclick=()=>{btn.classList.toggle('on');const enabled=btn.classList.contains('on');if(btn.dataset.toggle==='ambient')settings.ambient=enabled;if(btn.dataset.toggle==='motion')settings.reducedMotion=enabled;if(btn.dataset.toggle==='gapless')settings.gapless=enabled;if(btn.dataset.toggle==='dynamic-default')settings.dynamicArtByDefault=enabled;applySettings();saveLibrary()});
-  $('#crossfadeSetting').oninput=e=>{settings.crossfade=Number(e.target.value);setRange(e.target,e.target.value);saveLibrary()};
-  $('#updateChannel').onchange=e=>{settings.updateChannel=e.target.value==='beta'?'beta':'stable';updateState={status:'idle',channel:settings.updateChannel,available:false,progress:null};saveLibrary();renderUpdateWidget();checkForUpdates(true)};
-  $('#checkForUpdates').onclick=()=>checkForUpdates(true);
-  $('#showUpdateDetails').onclick=openUpdateModal;
-  $('#openaiKey').onchange=e=>{credentials.openaiKey=e.target.value.trim();saveCredentials();if(credentials.openaiKey)albums.filter(album=>album.dynamicCaseArt?.autoGenerate).forEach(queueDefaultDynamicCase);toast('OpenAI key saved','Stored with Windows encryption.')};
-  if($('#openDataFolder'))$('#openDataFolder').onclick=()=>window.firefly?.openDataDirectory();
-  $('#manageLiveFolders').onclick=()=>liveFolders.length?openLiveFoldersModal():addLiveFolder();
-  $('#connectSuno').onclick=connectSunoModal;
-  $$('.settings-menu button',view).forEach(btn=>btn.onclick=()=>{$$('.settings-menu button',view).forEach(b=>b.classList.remove('active'));btn.classList.add('active');toast(`${btn.textContent} preferences selected`)});
+  const tabs=[['appearance','Appearance'],['playback','Playback'],['library','Library'],['integrations','Integrations'],['privacy','Privacy & control']];
+  view.innerHTML = pageHead('MAKE IT YOURS','Settings','Tune every part of Firefly without interrupting playback.') + `<div class="settings-grid"><nav class="settings-menu">${tabs.map(([value,label])=>`<button class="${settingsTab===value?'active':''}" data-settings-tab="${value}">${label}</button>`).join('')}</nav><section class="settings-panel" data-settings-panel="${settingsTab}">${settingsPanelMarkup(settingsTab)}</section></div>`;
+  $$('[data-settings-tab]',view).forEach(button=>button.onclick=()=>{settingsTab=button.dataset.settingsTab;renderSettings()});
+  $$('.accent-swatches [data-accent]',view).forEach(button=>button.onclick=()=>{settings.accent=button.dataset.accent;settings.accentRgb=button.dataset.rgb;applySettings();saveLibrary();renderSettings()});
+  if($('#customAccent'))$('#customAccent').oninput=event=>{const hex=event.target.value,parts=hex.match(/[a-f\d]{2}/gi).map(value=>parseInt(value,16));settings.accent=hex;settings.accentRgb=parts.join(',');applySettings();saveLibrary()};
+  $$('[data-setting-toggle]',view).forEach(button=>button.onclick=()=>{const key=button.dataset.settingToggle;settings[key]=!settings[key];if(key==='shuffle')setShuffleEnabled(settings[key],{persist:false});if(key==='repeatMode')repeatMode=settings.repeatMode;applySettings();saveLibrary();renderSettings()});
+  $$('[data-setting-select]',view).forEach(select=>select.onchange=()=>{const key=select.dataset.settingSelect;settings[key]=select.value;if(key==='playbackRate')settings[key]=Number(select.value);if(key==='repeatMode')repeatMode=settings.repeatMode;if(key==='visualizerStyle')visualizerStyle=settings.visualizerStyle;applySettings();saveLibrary();render()});
+  $$('[data-setting-range]',view).forEach(range=>range.oninput=()=>{const key=range.dataset.settingRange,value=Number(range.value),percent=(value-Number(range.min))/(Number(range.max)-Number(range.min))*100;settings[key]=value;range.style.setProperty('--range',`${percent}%`);range.nextElementSibling.textContent=`${value}${key==='volume'||key==='uiScale'?'%':key==='playbackRate'?'×':key==='crossfade'?' sec':''}`;if(key==='volume')setVolume(value);else{applySettings();saveLibrary()}});
+  if($('#updateChannel'))$('#updateChannel').onchange=e=>{settings.updateChannel=e.target.value==='beta'?'beta':'stable';updateState={status:'idle',channel:settings.updateChannel,available:false,progress:null};saveLibrary();renderUpdateWidget();checkForUpdates(true)};
+  if($('#checkForUpdates'))$('#checkForUpdates').onclick=()=>checkForUpdates(true);if($('#showUpdateDetails'))$('#showUpdateDetails').onclick=openUpdateModal;
+  if($('#openaiKey'))$('#openaiKey').onchange=e=>{credentials.openaiKey=e.target.value.trim();saveCredentials();if(credentials.openaiKey)albums.filter(album=>album.dynamicCaseArt?.autoGenerate).forEach(queueDefaultDynamicCase);toast('OpenAI key saved','Stored with Windows encryption.')};
+  if($('#openDataFolder'))$('#openDataFolder').onclick=()=>window.firefly?.openDataDirectory();if($('#manageLiveFolders'))$('#manageLiveFolders').onclick=()=>liveFolders.length?openLiveFoldersModal():addLiveFolder();if($('#connectSuno'))$('#connectSuno').onclick=connectSunoModal;
+  if($('#resetSettings'))$('#resetSettings').onclick=()=>confirmRemove('Reset preferences?','Music, playlists, artwork, and connections will stay intact.',()=>{const channel=settings.updateChannel;settings={...defaultSettings,updateChannel:channel};shuffleEnabled=settings.shuffle;repeatMode=settings.repeatMode;visualizerStyle=settings.visualizerStyle;applySettings();saveLibrary();renderSettings();toast('Preferences reset')});
 }
 
 function sunoStateLabel(state='queuing'){return({queuing:'Queued',pending:'Queued',generating:'Generating',processing:'Generating',success:'Complete',fail:'Failed'}[state]||state)}
@@ -1021,6 +1090,7 @@ function parseSyncedLyrics(value=''){
 }
 function syncedLinesFor(track){return track?.lyrics?.syncedLines?.length?track.lyrics.syncedLines:parseSyncedLyrics(track?.lyrics?.synced||'')}
 async function lookupTrackLyrics(track,{force=false}={}){
+  if(!settings.onlineLyrics)return{found:false,disabled:true};
   if(!track||track.pending)return{found:false,synced:false};
   if(!force&&(track.lyrics?.plain||track.lyrics?.synced||track.lyrics?.syncedLines?.length))return{found:true,synced:Boolean(syncedLinesFor(track).length)};
   if(!window.firefly?.lookupLyrics)throw new Error('Lyrics lookup requires the Windows app.');
@@ -1039,6 +1109,7 @@ async function fetchLyricsForAlbum(album,statusElement=null){
   return{found,synced,total:tracks.length};
 }
 async function metadataLookup(a){
+  if(!settings.onlineMetadata){toast('Metadata lookup is disabled','Enable it under Settings · Privacy & control.');return}
   openModal(`<div class="modal-head"><h2>Searching metadata</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><div class="lookup-status"><span class="spinner"></span><span>Searching MusicBrainz and Cover Art Archive for ${esc(a.artist)} — ${esc(a.title)}…</span></div></div>`);
   let candidates=[];
   try {
@@ -1073,6 +1144,7 @@ function preferredCoverImage(images,type){
   return matches.find(image=>image.approved!==false)||matches[0]||null;
 }
 async function caseArtLookup(a){
+  if(!settings.onlineMetadata){toast('Artwork lookup is disabled','Enable metadata lookup under Settings · Privacy & control.');return}
   openModal(`<div class="modal-head"><h2>Searching full case artwork</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><div class="lookup-status"><span class="spinner"></span><span>Searching release scans for front, spine, and back artwork for ${esc(a.artist)} — ${esc(a.title)}…</span></div></div>`);
   let cases=[];
   try{
@@ -1343,20 +1415,21 @@ function playTrack(track,preserveQueue=false){
   if(track.pending){toast('Skipped pending track','Import the audio file to make this track playable.');return}
   if(!preserveQueue){if(shuffleEnabled){const library=allTracks().filter(item=>!item.pending),rest=library.filter(item=>item.id!==track.id);playbackOriginalQueue=[...library];playbackQueue=[track,...shuffledTracks(rest)];playbackQueueExplicit=true}else{playbackQueue=[];playbackOriginalQueue=[];playbackQueueExplicit=false}}
   pendingPlayCountTrackId=track.id;
-  currentTrack=track;const a=albumById(track.albumId);$('#nowTitle').textContent=track.title;$('#nowArtist').textContent=`${track.artist} · ${track.album}`;$('#fullTitle').textContent=track.title;$('#fullArtist').textContent=`${track.artist} · ${track.album}`;
+  currentTrack=track;const a=albumById(track.albumId);$('#nowTitle').textContent=track.title;$('#nowArtist').textContent=`${track.artist} · ${track.album}`;$('#fullTitle').textContent=track.title;$('#fullArtist').textContent=`${track.artist} · ${track.album}`;updateFavoriteControl();
   $$('.now-cover').forEach(c=>{c.className=`now-cover ${a?.cover||'cover-8'}`;if(a?.customCover){c.style.backgroundImage=`url('${a.customCover}')`;c.style.backgroundSize='cover'}});
   updateFullscreenArtistBackdrop(track);
   renderQueue();
-  if(track.url){audio.src=track.url;audio.play().then(()=>setPlaying(true)).catch(()=>toast('Playback needs a click','Press play once to allow local audio.'));}else{simProgress=0;setRange($('#progress'),0);setPlaying(true);commitPlayCount(track)}
+  if(track.url){audio.volume=settings.muted?0:settings.volume/100;audio.src=track.url;audio.playbackRate=Math.max(.5,Math.min(2,Number(settings.playbackRate)||1));audio.play().then(()=>setPlaying(true)).catch(()=>toast('Playback needs a click','Press play once to allow local audio.'));}else{simProgress=0;setRange($('#progress'),0);setPlaying(true);commitPlayCount(track)}
   if($('#fullscreenPlayer').classList.contains('open')){if(fullscreenMode==='video')prepareTrackVideo(track);if(fullscreenMode==='lyrics')renderLyricsStage(track)}
 }
 function setPlaying(value){isPlaying=value;const name=value?'pause':'play';$('#playBtn').innerHTML=icon(name);$('#fullPlay').innerHTML=icon(name);renderQueue();clearInterval(simTimer);if(value&&!currentTrack.url){simTimer=setInterval(()=>{simProgress=(simProgress+.22)%100;setRange($('#progress'),simProgress);$('#elapsed').textContent=formatTime(simProgress*2.72)},1000)}}
 function togglePlay(){if(!currentTrack){toast('Nothing to play','Import music first.');return}if(currentTrack.url){if(audio.paused)audio.play();else audio.pause()}else setPlaying(!isPlaying)}
 function formatTime(s){s=Math.floor(s);return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`}
-function nextTrack(dir=1,{ended=false}={}){const tracks=effectivePlaybackQueue();if(!tracks.length){toast(playbackQueueExplicit?'Queue finished':'Nothing to play',playbackQueueExplicit?'Add songs or start another collection.':'Import music first.');return}const idx=currentTrack?tracks.findIndex(t=>t.id===currentTrack.id):-1;if(ended&&repeatMode==='one'){playTrack(currentTrack,true);return}if(ended&&idx===tracks.length-1&&repeatMode==='off'){setPlaying(false);renderQueue();return}const next=idx<0?(dir>=0?0:tracks.length-1):(idx+dir+tracks.length)%tracks.length;playTrack(tracks[next],playbackQueueExplicit)}
+function nextTrack(dir=1,{ended=false}={}){const tracks=effectivePlaybackQueue();if(!tracks.length){toast(playbackQueueExplicit?'Queue finished':'Nothing to play',playbackQueueExplicit?'Add songs or start another collection.':'Import music first.');return}const idx=currentTrack?tracks.findIndex(t=>t.id===currentTrack.id):-1;if(ended&&settings.stopAfterCurrent){settings.stopAfterCurrent=false;setPlaying(false);saveLibrary();toast('Stopped after current track');return}if(ended&&!settings.autoplayNext){setPlaying(false);renderQueue();return}if(ended&&repeatMode==='one'){playTrack(currentTrack,true);return}if(ended&&idx===tracks.length-1&&repeatMode==='off'){setPlaying(false);renderQueue();return}const next=idx<0?(dir>=0?0:tracks.length-1):(idx+dir+tracks.length)%tracks.length;playTrack(tracks[next],playbackQueueExplicit)}
 function updateVolumeControls(){const slider=$('#volume'),button=$('#volumeMute');if(!slider||!button)return;setRange(slider,settings.volume);button.innerHTML=icon(settings.muted||settings.volume===0?'mute':'volume');button.classList.toggle('active',Boolean(settings.muted));button.setAttribute('aria-label',settings.muted?'Unmute':'Mute');button.title=button.getAttribute('aria-label')}
 function persistVolumeSoon(){clearTimeout(volumePersistenceTimer);volumePersistenceTimer=setTimeout(()=>saveLibrary(),350)}
 function setVolume(value){settings.volume=Math.max(0,Math.min(100,Number(value)||0));settings.muted=settings.volume===0;if(settings.volume>0)lastAudibleVolume=settings.volume;audio.volume=settings.muted?0:settings.volume/100;updateVolumeControls();persistVolumeSoon()}
+function updatePlaybackEnvelope(){if(!audio.duration||settings.muted)return;const fade=Math.max(0,Math.min(12,Number(settings.crossfade)||0)),remaining=audio.duration-audio.currentTime,gain=fade&&remaining<fade?Math.max(.18,remaining/fade):1;audio.volume=settings.volume/100*gain}
 function toggleMute(){settings.muted=!settings.muted;if(!settings.muted&&settings.volume===0)settings.volume=lastAudibleVolume||72;audio.volume=settings.muted?0:settings.volume/100;updateVolumeControls();saveLibrary();toast(settings.muted?'Muted':'Sound on')}
 
 function videoFromUrl(resource){
@@ -1408,6 +1481,7 @@ function rankedYouTubeVideos(results=[],track){
 }
 const waitForMusicBrainz=()=>new Promise(resolve=>setTimeout(resolve,1100));
 async function discoverExistingMusicVideo(track){
+  if(!settings.onlineMusicVideos)return{status:'not-found',finderVersion:VIDEO_FINDER_VERSION,searchedAt:Date.now(),disabled:true};
   const cached=track.video;
   if(cached?.status==='found'&&cached.embedUrl)return cached;
   if(cached?.finderVersion===VIDEO_FINDER_VERSION&&cached?.status==='not-found'&&Date.now()-(cached.searchedAt||0)<VIDEO_RECHECK_MS)return cached;
@@ -1567,7 +1641,7 @@ $('#updateWidget').onclick=openUpdateModal;
 $('#miniPlaylists').addEventListener('click',e=>{const btn=e.target.closest('[data-sidebar-playlist]');if(btn)openPlaylist(btn.dataset.sidebarPlaylist)});
 document.addEventListener('click',e=>{
   if(!e.target.closest('#contextMenu')&&!e.target.closest('#importTrigger'))hideContextMenu();
-  const selectableAlbum=e.target.closest('.album-card[data-album]'),selectableTrack=e.target.closest('tr[data-track]'),modifier=e.ctrlKey||e.metaKey||e.shiftKey;
+  const selectableAlbum=e.target.closest('.album-card[data-album],.album-list-row[data-album]'),selectableTrack=e.target.closest('tr[data-track]'),modifier=e.ctrlKey||e.metaKey||e.shiftKey;
   if(modifier&&!e.target.closest('button')&&(selectableAlbum||selectableTrack)){e.preventDefault();handleBulkSelection(selectableAlbum?'album':'track',selectableAlbum?.dataset.album||selectableTrack.dataset.track,e);return}
   if(!modifier&&!e.target.closest('button')&&(selectableAlbum||selectableTrack)&&(selectedTrackIds.size||selectedAlbumIds.size))clearBulkSelection();
   const videoAction=e.target.closest('[data-video-action]');
@@ -1578,7 +1652,7 @@ document.addEventListener('click',e=>{
   const importBtn=e.target.closest('[data-import]');if(importBtn){importBtn.dataset.import==='folder'?chooseFolder():chooseFiles()}
   const edit=e.target.closest('[data-edit-album]');if(edit){e.stopPropagation();editAlbum(edit.dataset.editAlbum)}
   const play=e.target.closest('[data-play-album]');if(play){e.stopPropagation();playTrackQueue(albumById(play.dataset.playAlbum)?.tracks||[])}
-  const album=e.target.closest('.album-card');if(album&&!e.target.closest('button'))openAlbumDetail(album.dataset.album);
+  const album=e.target.closest('.album-card,.album-list-row');if(album&&!e.target.closest('button'))openAlbumDetail(album.dataset.album);
   const row=e.target.closest('[data-track]');if(row&&!e.target.closest('button')){const t=allTracks().find(x=>x.id===row.dataset.track);if(t)playTrack(t)}
   const rowAction=e.target.closest('[data-row-action]');if(rowAction){const t=allTracks().find(x=>x.id===rowAction.dataset.rowAction),rect=rowAction.getBoundingClientRect();if(t)trackContext(t,rect.right-205,rect.bottom+4)}
 });
@@ -1598,9 +1672,10 @@ $('#folderInput').onchange=e=>{if(e.target.files.length){const entries=normalize
 $('#screenshotInput').onchange=e=>{if(e.target.files[0])screenshotWorkflow(e.target.files[0]);e.target.value=''};
 $('#playBtn').onclick=togglePlay;$('#fullPlay').onclick=togglePlay;$('#prevBtn').onclick=()=>nextTrack(-1);$('#nextBtn').onclick=()=>nextTrack(1);$('#fullPrev').onclick=()=>nextTrack(-1);$('#fullNext').onclick=()=>nextTrack(1);$('#fullscreenBtn').onclick=openFullscreen;$('#closeFull').onclick=closeFullscreen;
 $('#queueButton').onclick=()=>$('#queuePanel').classList.contains('open')?closeQueue():openQueue();$('#closeQueue').onclick=closeQueue;$('#queueBackdrop').onclick=closeQueue;$('#clearQueue').onclick=clearPlaybackQueue;
-audio.onplay=()=>{setPlaying(true);commitPlayCount(currentTrack)};audio.onpause=()=>setPlaying(false);audio.onended=()=>nextTrack(1,{ended:true});audio.ontimeupdate=()=>{if(!audio.duration)return;const p=audio.currentTime/audio.duration*100;setRange($('#progress'),p);$('#elapsed').textContent=formatTime(audio.currentTime);$('#duration').textContent=formatTime(audio.duration);updateLyricsPosition(audio.currentTime)};
+audio.onplay=()=>{audio.volume=settings.muted?0:settings.volume/100;setPlaying(true);commitPlayCount(currentTrack)};audio.onpause=()=>setPlaying(false);audio.onended=()=>nextTrack(1,{ended:true});audio.ontimeupdate=()=>{if(!audio.duration)return;const p=audio.currentTime/audio.duration*100;setRange($('#progress'),p);$('#elapsed').textContent=formatTime(audio.currentTime);$('#duration').textContent=formatTime(audio.duration);updatePlaybackEnvelope();updateLyricsPosition(audio.currentTime)};
 $('#progress').oninput=e=>{setRange(e.target,e.target.value);if(currentTrack?.url&&audio.duration)audio.currentTime=audio.duration*e.target.value/100;else simProgress=Number(e.target.value)};
 $('#volume').oninput=e=>setVolume(e.target.value);$('#volume').onchange=()=>{clearTimeout(volumePersistenceTimer);saveLibrary()};$('#volumeMute').onclick=toggleMute;
+$('#favoriteTrack').onclick=()=>currentTrack?setTrackFavorite(currentTrack):toast('Nothing is playing');
 $('#shuffleBtn').onclick=()=>{setShuffleEnabled(!shuffleEnabled);toast(shuffleEnabled?'Shuffle on':'Shuffle off',shuffleEnabled?(playbackQueueExplicit?'The active queue was reshuffled.':'New collections will play in random order.'):'Collections will play in their listed order.')};$('#repeatBtn').onclick=cycleRepeatMode;
 $('#searchInput').oninput=e=>{if(currentView==='home'&&e.target.value.trim()){navigate('songs');renderSongs(e.target.value)}else if(currentView==='albums')renderAlbums(e.target.value);else if(currentView==='artists')renderArtists(e.target.value);else if(currentView==='songs')renderSongs(e.target.value)};
 $('#searchInput').addEventListener('keydown',e=>{if(e.key==='Escape'){e.target.value='';render()}});

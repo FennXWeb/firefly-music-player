@@ -205,7 +205,7 @@ async function generateDynamicCaseArt(options = {}) {
 async function cacheArtistImage(options = {}) {
   const source = new URL(options.url || '');
   const host = source.hostname.toLowerCase();
-  const allowed = host === 'wikimedia.org' || host.endsWith('.wikimedia.org') || host === 'cdn-images.dzcdn.net' || host === 'r2.theaudiodb.com' || host === 'theaudiodb.com' || host.endsWith('.theaudiodb.com');
+  const allowed = host === 'wikimedia.org' || host.endsWith('.wikimedia.org') || host === 'cdn-images.dzcdn.net' || host === 'r2.theaudiodb.com' || host === 'theaudiodb.com' || host.endsWith('.theaudiodb.com') || /^media\d*\.giphy\.com$/.test(host) || host === 'i.giphy.com' || host === 'media.tenor.com';
   if (source.protocol !== 'https:' || !allowed) throw new Error('This artist-image source is not trusted by Firefly.');
   const response = await net.fetch(source.href);
   if (!response.ok) throw new Error(`Artist image download failed (${response.status}).`);
@@ -228,15 +228,27 @@ async function fetchArtistJson(url) {
 }
 function normalizedArtistName(value = '') { return String(value).normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/gi, ' ').trim().toLowerCase(); }
 async function searchWikimediaAnimatedArtistImages(artist=''){
-  const params=new URLSearchParams({action:'query',generator:'search',gsrsearch:`"${artist}" animated gif`,gsrnamespace:'6',gsrlimit:'32',prop:'imageinfo',iiprop:'url|mime|size|extmetadata',format:'json',origin:'*'});
-  const body=await fetchArtistJson(`https://commons.wikimedia.org/w/api.php?${params}`),pages=Object.values(body?.query?.pages||{});
-  return pages.map(page=>{const info=page.imageinfo?.[0];if(info?.mime!=='image/gif'||!info.url)return null;const metadata=info.extmetadata||{},clean=value=>String(value||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();return{image:info.url,sourceUrl:info.descriptionurl||`https://commons.wikimedia.org/wiki/${encodeURIComponent(page.title.replaceAll(' ','_'))}`,sourceLabel:'Wikimedia GIF',label:clean(metadata.ObjectName?.value)||page.title.replace(/^File:/,''),description:clean(metadata.ImageDescription?.value)||`Animated artist image for ${artist}`,animated:true,width:info.width||null,height:info.height||null}}).filter(Boolean).slice(0,10);
+  const queries=[`"${artist}" gif`,`"${artist}" animated`,`"${artist}" concert`],searches=await Promise.allSettled(queries.map(async query=>{const params=new URLSearchParams({action:'query',generator:'search',gsrsearch:query,gsrnamespace:'6',gsrlimit:'24',prop:'imageinfo',iiprop:'url|mime|size|extmetadata',format:'json',origin:'*'});return fetchArtistJson(`https://commons.wikimedia.org/w/api.php?${params}`)}));
+  const pages=searches.flatMap(result=>result.status==='fulfilled'?Object.values(result.value?.query?.pages||{}):[]),seen=new Set();
+  return pages.map(page=>{const info=page.imageinfo?.[0];if(info?.mime!=='image/gif'||!info.url||seen.has(info.url))return null;seen.add(info.url);const metadata=info.extmetadata||{},clean=value=>String(value||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();return{image:info.url,sourceUrl:info.descriptionurl||`https://commons.wikimedia.org/wiki/${encodeURIComponent(page.title.replaceAll(' ','_'))}`,sourceLabel:'Wikimedia GIF',label:clean(metadata.ObjectName?.value)||page.title.replace(/^File:/,''),description:clean(metadata.ImageDescription?.value)||`Animated artist image for ${artist}`,animated:true,width:info.width||null,height:info.height||null}}).filter(Boolean).slice(0,10);
 }
-async function searchSupplementalArtistImages(artist = '') {
+async function fetchArtistPage(url){const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),12000);try{const response=await net.fetch(url,{signal:controller.signal,headers:{'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/137 Safari/537.36','Accept-Language':'en-US,en;q=0.9'}});if(!response.ok)throw new Error(`Animated image source returned ${response.status}.`);return response.text()}finally{clearTimeout(timeout)}}
+async function searchGiphyArtistImages(artist=''){
+  const slug=String(artist).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||encodeURIComponent(artist),html=await fetchArtistPage(`https://giphy.com/search/${slug}`),seen=new Set(),results=[];
+  for(const match of html.matchAll(/https:\/\/media\d*\.giphy\.com\/media\/([A-Za-z0-9]+)\/[^"'\\\s<)]*?\.gif/gi)){const id=match[1];if(seen.has(id))continue;seen.add(id);results.push({image:`https://media.giphy.com/media/${id}/giphy.gif`,sourceUrl:`https://giphy.com/gifs/${id}`,sourceLabel:'GIPHY',label:`${artist} animation`,description:'Animated search result',animated:true});if(results.length>=10)break}
+  return results;
+}
+async function searchTenorArtistImages(artist=''){
+  const slug=String(artist).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||encodeURIComponent(artist),sourceUrl=`https://tenor.com/search/${slug}-gifs`,html=(await fetchArtistPage(sourceUrl)).replace(/\\u002[fF]/g,'/').replace(/&amp;/g,'&'),seen=new Set(),results=[];
+  for(const match of html.matchAll(/https:\/\/media\.tenor\.com\/([A-Za-z0-9_-]+)\/[^"'\\\s<>]*?\.gif/gi)){const id=match[1],image=match[0].replace(/\\/g,'');if(seen.has(id))continue;seen.add(id);results.push({image,sourceUrl,sourceLabel:'Tenor',label:`${artist} animation`,description:'Animated search result',animated:true});if(results.length>=10)break}
+  return results;
+}
+async function searchSupplementalArtistImages(artist = '', options = {}) {
   artist = String(artist).trim().slice(0, 160);
   if (!artist) return [];
   const wanted = normalizedArtistName(artist);
-  const sources = await Promise.allSettled([
+  const animatedSources=[searchWikimediaAnimatedArtistImages(artist),searchGiphyArtistImages(artist),searchTenorArtistImages(artist)];
+  const staticSources=options.animatedOnly?[]:[
     fetchArtistJson(`https://api.deezer.com/search/artist?q=${encodeURIComponent(artist)}&limit=8`).then(body => {
       const ranked = (body?.data || []).map(item => ({ item, match: normalizedArtistName(item.name) === wanted ? 3 : normalizedArtistName(item.name).startsWith(wanted) ? 2 : normalizedArtistName(item.name).includes(wanted) ? 1 : 0 })).filter(entry => entry.match && entry.item.picture_xl && !/\/artist\/\/\d+x\d+/.test(entry.item.picture_xl)).sort((left, right) => right.match - left.match);
       return ranked.slice(0, 3).map(({ item }) => ({ image: item.picture_xl || item.picture_big, sourceUrl: item.link || `https://www.deezer.com/artist/${item.id}`, sourceLabel: 'Deezer', label: item.name || artist, description: 'Official music-service artist portrait' }));
@@ -250,9 +262,9 @@ async function searchSupplementalArtistImages(artist = '') {
         if (item.strArtistWideThumb) results.push({ image: item.strArtistWideThumb, sourceUrl, sourceLabel: 'TheAudioDB', label: item.strArtist || artist, description: 'Wide artist photograph' });
       }
       return results.slice(0, 6);
-    }),
-    searchWikimediaAnimatedArtistImages(artist)
-  ]);
+    })
+  ];
+  const sources = await Promise.allSettled([...staticSources,...animatedSources]);
   return sources.flatMap(result => result.status === 'fulfilled' ? result.value : []);
 }
 function youtubeText(value={}){return String(value?.simpleText||value?.runs?.map(run=>run?.text||'').join('')||'').trim()}
@@ -696,7 +708,7 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('dynamic-case:ensure-fonts', async () => ensureDynamicFontLibrary());
   ipcMain.handle('dynamic-case:generate', async (_event, options) => generateDynamicCaseArt(options));
-  ipcMain.handle('artist:image-search', async (_event, artist) => searchSupplementalArtistImages(artist));
+  ipcMain.handle('artist:image-search', async (_event, artist, options) => searchSupplementalArtistImages(artist, options));
   ipcMain.handle('artist:image-cache', async (_event, options) => cacheArtistImage(options));
   ipcMain.handle('video:search-youtube', async (_event, options) => searchYouTubeMusicVideos(options));
   ipcMain.handle('lyrics:lookup', async (_event, options) => lookupLyrics(options));
