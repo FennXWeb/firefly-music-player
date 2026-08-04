@@ -1,9 +1,9 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "publishedAt": "2026-08-03T00:00:00Z",
-  "notes": "Initial test-channel baseline. Future preview builds are published from the beta branch.",
+  "notes": "Test-channel build with collection-scoped Play and Shuffle queues.",
   "downloadUrl": "",
   "sha256": ""
 }
