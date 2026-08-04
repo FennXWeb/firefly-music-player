@@ -35,6 +35,7 @@ let currentTrack = null;
 let playbackQueue = [];
 let playbackQueueExplicit = false;
 let draggedQueueTrack = null;
+let pendingPlayCountTrackId = null;
 let isPlaying = false;
 let simProgress = 38;
 let simTimer = null;
@@ -57,6 +58,8 @@ const modalLayer = $('#modalLayer');
 
 function allTracks() { return albums.flatMap(a => a.tracks); }
 function albumById(id) { return albums.find(a => a.id === id); }
+const OLD_BANGER_AGE_MS = 90 * 24 * 60 * 60 * 1000;
+function isOldBanger(track) { const lastPlayed=Number(track.lastPlayed)||0;return Number(track.plays)>45&&lastPlayed>0&&Date.now()-lastPlayed>=OLD_BANGER_AGE_MS; }
 function pruneEmptyAlbums() {
   const before=albums.length;
   albums=albums.filter(album=>Array.isArray(album.tracks)&&album.tracks.length>0);
@@ -145,7 +148,7 @@ function saveCredentials() {
   return Promise.resolve(false);
 }
 function applySavedState(saved = {}) {
-  if (Array.isArray(saved.albums)) albums = saved.albums;
+  if (Array.isArray(saved.albums)) { albums = saved.albums;albums.forEach(album=>(album.tracks||[]).forEach(track=>{track.plays=Math.max(0,Number(track.plays)||0);if(track.lastPlayed!=null&&!Number.isFinite(Number(track.lastPlayed)))track.lastPlayed=null})); }
   if (Array.isArray(saved.playlists)) customPlaylists = saved.playlists;
   if (Array.isArray(saved.shelves)) shelves = saved.shelves;
   if (saved.artistProfiles && typeof saved.artistProfiles === 'object' && !Array.isArray(saved.artistProfiles)) artistProfiles = saved.artistProfiles;
@@ -407,14 +410,14 @@ function renderPlaylists() {
   `<div class="playlist-layout"><div>${customPlaylists.length?`<div class="playlist-grid">${customPlaylists.map((p,i)=>`<button class="playlist-card" draggable="true" data-playlist-card="${p.id}" style="--card-color:${p.color}"><div class="orb"></div><small>${p.children?'MASTER PLAYLIST':'PLAYLIST'}</small><span class="stack">${p.children?'◫':'♫'}</span><h3>${esc(p.title)}</h3><p>${p.children?`${p.children.length} sub-playlists · `:''}${playlistTracks(p).length} songs</p></button>`).join('')}</div>`:`<div class="empty-state">${icon('playlist')}<h2>No playlists yet</h2><p>Create one, or import a screenshot to get started.</p><div class="empty-actions"><button class="primary" data-action="new-playlist">${icon('plus')} New playlist</button></div></div>`}</div>
   <aside><h2 class="side-heading">SMART PLAYLISTS</h2><div class="smart-list">
     <button class="smart-card" data-smart="backlog"><span class="smart-icon">◌</span><span><h3>The Backlog</h3><p>Added, but never played</p></span><b>${allTracks().filter(t=>!t.lastPlayed).length}</b></button>
-    <button class="smart-card" data-smart="old"><span class="smart-icon">↶</span><span><h3>The Old Bangers</h3><p>Old favorites due a replay</p></span><b>${allTracks().filter(t=>t.plays>45&&t.lastPlayed>50).length}</b></button>
+    <button class="smart-card" data-smart="old"><span class="smart-icon">↶</span><span><h3>The Old Bangers</h3><p>Old favorites due a replay</p></span><b>${allTracks().filter(isOldBanger).length}</b></button>
     <button class="smart-card" data-smart="hits"><span class="smart-icon">↗</span><span><h3>The Hits</h3><p>Your top 50 tracks</p></span><b>${Math.min(50,allTracks().length)}</b></button>
   </div><div class="screenshot-cta">${icon('camera')}<h3>Screenshot to playlist</h3><p>Drop in a playlist screenshot. Firefly identifies every track.</p><button class="primary" id="screenshotTrigger">Choose screenshot</button></div></aside></div>`;
   bindPlaylistDrag();
   $('#screenshotTrigger').onclick = () => $('#screenshotInput').click();
   $$('.smart-card',view).forEach(btn => btn.onclick = () => {
     const type=btn.dataset.smart; let tracks=allTracks();
-    if(type==='backlog') tracks=tracks.filter(t=>!t.lastPlayed); if(type==='old') tracks=tracks.filter(t=>t.plays>45&&t.lastPlayed>50); if(type==='hits') tracks=tracks.sort((a,b)=>b.plays-a.plays).slice(0,50);
+    if(type==='backlog') tracks=tracks.filter(t=>!t.lastPlayed); if(type==='old') tracks=tracks.filter(isOldBanger); if(type==='hits') tracks=tracks.sort((a,b)=>(Number(b.plays)||0)-(Number(a.plays)||0)).slice(0,50);
     openTrackCollection(btn.querySelector('h3').textContent, tracks);
   });
 }
@@ -920,6 +923,17 @@ function renderQueue(){
 function openQueue(){const panel=$('#queuePanel');panel.classList.add('open');panel.setAttribute('aria-hidden','false');$('#queueBackdrop').classList.add('open');$('#queueButton').setAttribute('aria-expanded','true');renderQueue()}
 function closeQueue(){const panel=$('#queuePanel');panel.classList.remove('open');panel.setAttribute('aria-hidden','true');$('#queueBackdrop').classList.remove('open');$('#queueButton').setAttribute('aria-expanded','false');renderQueue()}
 function clearPlaybackQueue(){playbackQueue=[];playbackQueueExplicit=true;renderQueue();toast('Queue cleared','The current song will keep playing.')}
+function refreshVisiblePlayStats(track){
+  $$('tr[data-track]').forEach(row=>{if(row.dataset.track!==track.id)return;const cells=row.querySelectorAll('td');if(cells[3])cells[3].textContent=String(track.plays)});
+  const backlog=$('[data-smart="backlog"] b',view),old=$('[data-smart="old"] b',view),hits=$('[data-smart="hits"] b',view);
+  if(backlog)backlog.textContent=String(allTracks().filter(item=>!item.lastPlayed).length);
+  if(old)old.textContent=String(allTracks().filter(isOldBanger).length);
+  if(hits)hits.textContent=String(Math.min(50,allTracks().filter(item=>!item.pending).length));
+}
+function commitPlayCount(track){
+  if(!track||track.pending||pendingPlayCountTrackId!==track.id)return false;
+  pendingPlayCountTrackId=null;track.plays=(Number(track.plays)||0)+1;track.lastPlayed=Date.now();saveLibrary();refreshVisiblePlayStats(track);return true;
+}
 function playTrackQueue(tracks,shuffle=false){
   const nextQueue=tracks.filter(track=>!track.pending);if(!nextQueue.length){toast('No playable tracks');return}
   playbackQueue=nextQueue;playbackQueueExplicit=true;
@@ -930,11 +944,12 @@ function playTrack(track,preserveQueue=false){
   if(!track){toast('Nothing to play','Import music first.');return}
   if(track.pending){toast('Skipped pending track','Import the audio file to make this track playable.');return}
   if(!preserveQueue){playbackQueue=[];playbackQueueExplicit=false}
+  pendingPlayCountTrackId=track.id;
   currentTrack=track;const a=albumById(track.albumId);$('#nowTitle').textContent=track.title;$('#nowArtist').textContent=`${track.artist} · ${track.album}`;$('#fullTitle').textContent=track.title;$('#fullArtist').textContent=`${track.artist} · ${track.album}`;
   $$('.now-cover').forEach(c=>{c.className=`now-cover ${a?.cover||'cover-8'}`;if(a?.customCover){c.style.backgroundImage=`url('${a.customCover}')`;c.style.backgroundSize='cover'}});
   updateFullscreenArtistBackdrop(track);
   renderQueue();
-  if(track.url){audio.src=track.url;audio.play().then(()=>setPlaying(true)).catch(()=>toast('Playback needs a click','Press play once to allow local audio.'));}else{simProgress=0;setRange($('#progress'),0);setPlaying(true)}
+  if(track.url){audio.src=track.url;audio.play().then(()=>setPlaying(true)).catch(()=>toast('Playback needs a click','Press play once to allow local audio.'));}else{simProgress=0;setRange($('#progress'),0);setPlaying(true);commitPlayCount(track)}
   if($('#fullscreenPlayer').classList.contains('open'))prepareTrackVideo(track);
 }
 function setPlaying(value){isPlaying=value;const name=value?'pause':'play';$('#playBtn').innerHTML=icon(name);$('#fullPlay').innerHTML=icon(name);renderQueue();clearInterval(simTimer);if(value&&!currentTrack.url){simTimer=setInterval(()=>{simProgress=(simProgress+.22)%100;setRange($('#progress'),simProgress);$('#elapsed').textContent=formatTime(simProgress*2.72)},1000)}}
@@ -1108,7 +1123,7 @@ $('#folderInput').onchange=e=>{if(e.target.files.length){const entries=normalize
 $('#screenshotInput').onchange=e=>{if(e.target.files[0])screenshotWorkflow(e.target.files[0]);e.target.value=''};
 $('#playBtn').onclick=togglePlay;$('#fullPlay').onclick=togglePlay;$('#prevBtn').onclick=()=>nextTrack(-1);$('#nextBtn').onclick=()=>nextTrack(1);$('#fullscreenBtn').onclick=openFullscreen;$('#closeFull').onclick=closeFullscreen;
 $('#queueButton').onclick=()=>$('#queuePanel').classList.contains('open')?closeQueue():openQueue();$('#closeQueue').onclick=closeQueue;$('#queueBackdrop').onclick=closeQueue;$('#clearQueue').onclick=clearPlaybackQueue;
-audio.onplay=()=>setPlaying(true);audio.onpause=()=>setPlaying(false);audio.onended=()=>nextTrack(1);audio.ontimeupdate=()=>{if(!audio.duration)return;const p=audio.currentTime/audio.duration*100;setRange($('#progress'),p);$('#elapsed').textContent=formatTime(audio.currentTime);$('#duration').textContent=formatTime(audio.duration)};
+audio.onplay=()=>{setPlaying(true);commitPlayCount(currentTrack)};audio.onpause=()=>setPlaying(false);audio.onended=()=>nextTrack(1);audio.ontimeupdate=()=>{if(!audio.duration)return;const p=audio.currentTime/audio.duration*100;setRange($('#progress'),p);$('#elapsed').textContent=formatTime(audio.currentTime);$('#duration').textContent=formatTime(audio.duration)};
 $('#progress').oninput=e=>{setRange(e.target,e.target.value);if(currentTrack?.url&&audio.duration)audio.currentTime=audio.duration*e.target.value/100;else simProgress=Number(e.target.value)};
 $('#volume').oninput=e=>{setRange(e.target,e.target.value);settings.volume=Number(e.target.value);audio.volume=settings.volume/100;saveLibrary()};
 $('#shuffleBtn').onclick=()=>{const tracks=allTracks();if(!tracks.some(t=>!t.pending)){toast('Nothing to shuffle','Import music first.');return}playTrackQueue(tracks,true);toast('Shuffling your library')};

@@ -18,6 +18,7 @@ Firefly is a local-first, highly customizable music player concept for Windows. 
 - Album shelf mode with drag sorting and an animated, openable jewel case.
 - Fullscreen player with visualizer and generated-video queue states.
 - Nested master playlists, drag-to-group interactions, and smart playlists.
+- Persistent per-track play counts and last-played history, recorded once when each new playback genuinely starts.
 - Screenshot-to-playlist workflow with pending tracks and import actions.
 - OpenAI and metadata-provider settings, plus an ApiPass-powered Suno Studio with encrypted credentials, V5.5 generation, background task polling, two-variant previews, and local library import.
 

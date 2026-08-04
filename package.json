@@ -1,48 +1,11 @@
 {
   "name": "firefly-music",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "private": true,
   "description": "A highly customizable, local-first music player for Windows.",
   "author": "Firefly",
   "license": "MIT",
   "main": "main.js",
-  "scripts": {
-    "start": "electron .",
-    "dev": "electron .",
-    "dist:win": "electron-builder --win portable"
-  },
-  "devDependencies": {
-    "electron": "^37.2.0",
-    "electron-builder": "^26.0.12"
-  },
-  "build": {
-    "appId": "com.firefly.music",
-    "productName": "Firefly",
-    "asar": true,
-    "npmRebuild": false,
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "index.html",
-      "styles.css",
-      "app.js",
-      "main.js",
-      "preload.js",
-      "assets/**/*",
-      "package.json"
-    ],
-    "win": {
-      "icon": "assets/firefly.ico",
-      "target": [
-        "portable"
-      ]
-    },
-    "portable": {
-      "artifactName": "Firefly-${version}-Windows.exe",
-      "requestExecutionLevel": "user"
-    }
-  },
   "dependencies": {
     "music-metadata": "^11.14.0"
   }
