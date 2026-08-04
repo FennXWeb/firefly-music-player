@@ -1,9 +1,9 @@
 {
   "channel": "stable",
   "branch": "main",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "publishedAt": "2026-08-03T00:00:00Z",
-  "notes": "Initial stable release with automatic GitHub update checks.",
+  "notes": "Collection Play and Shuffle actions now replace the active queue with only that album, artist, playlist, or smart collection.",
   "downloadUrl": "",
   "sha256": ""
 }

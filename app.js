@@ -365,8 +365,8 @@ function renderAlbumDetail(id){
   $('[data-detail-back]').onclick=()=>navigate('albums');
   $('[data-open-artist]').onclick=()=>openArtistDetail(album.artist);
   $('[data-detail-case]').onclick=()=>{openedAlbumCases.has(id)?openedAlbumCases.delete(id):openedAlbumCases.add(id);const caseElement=$('[data-detail-case]'),opened=openedAlbumCases.has(id);caseElement.classList.toggle('open',opened);caseElement.setAttribute('aria-expanded',String(opened));caseElement.setAttribute('aria-label',`${opened?'Close':'Open'} ${album.title} jewel case`);$('.case-toggle-hint').textContent=`Click the jewel case to ${opened?'close':'open'} it`};
-  $('[data-detail-play]').onclick=()=>playTrack(album.tracks.find(t=>!t.pending));
-  $('[data-detail-shuffle]').onclick=()=>{const playable=album.tracks.filter(t=>!t.pending);if(playable.length)playTrack(playable[Math.floor(Math.random()*playable.length)])};
+  $('[data-detail-play]').onclick=()=>playTrackQueue(album.tracks);
+  $('[data-detail-shuffle]').onclick=()=>playTrackQueue(album.tracks,true);
   $('[data-detail-add-playlist]').onclick=()=>addAlbumToPlaylist(album);
   $('[data-detail-edit]').onclick=()=>editAlbum(id);
 }
@@ -375,8 +375,8 @@ function renderArtistDetail(name){
   const tracks=artistAlbums.flatMap(album=>album.tracks),profile=artistProfile(name);
   view.innerHTML=`<section class="entity-detail artist-detail"><button class="detail-back" data-detail-back>${icon('prev')} All artists</button><div class="artist-detail-hero" data-artist="${esc(name)}" ${profile.image?`style="--artist-hero:url(&quot;${esc(profile.image)}&quot;)"`:''}><div class="artist-hero-glow"></div>${artistPortraitMarkup(name,'artist-portrait-large')}<div class="artist-detail-copy"><div class="eyebrow">ARTIST</div><h1>${esc(name)}</h1><p>${artistAlbums.length} album${artistAlbums.length===1?'':'s'} · ${tracks.length} song${tracks.length===1?'':'s'}${profile.sourceUrl?` · <a href="${esc(profile.sourceUrl)}" target="_blank" rel="noreferrer">Image source</a>`:''}</p><div class="detail-actions"><button class="primary" data-artist-play>${icon('play')} Play</button><button class="ghost" data-artist-shuffle>${icon('shuffle')} Shuffle</button><button class="ghost" data-artist-image>${icon('image')} ${profile.image?'Change image':'Add image'}</button></div></div></div><section class="artist-albums"><div class="section-heading"><div><div class="eyebrow">DISCOGRAPHY</div><h2>Albums</h2></div></div><div class="album-grid">${artistAlbums.map((album,index)=>`<article class="album-card" data-album="${album.id}" style="animation-delay:${index*35}ms"><div class="album-art-wrap">${albumCover(album)}${dynamicCaseReady(album)?'<span class="dynamic-album-badge">DYNAMIC CASE</span>':''}<button class="quick-play" data-play-album="${album.id}" aria-label="Play ${esc(album.title)}">${icon('play')}</button></div><h3>${esc(album.title)}</h3><p>${album.year} · ${album.tracks.length} tracks</p><button class="more" data-edit-album="${album.id}" aria-label="Edit album">${icon('more')}</button></article>`).join('')}</div></section><section class="detail-track-section"><div><div class="eyebrow">ALL SONGS</div><h2>Popular tracks</h2></div>${songTable([...tracks].sort((a,b)=>(b.plays||0)-(a.plays||0)))}</section></section>`;
   $('[data-detail-back]').onclick=()=>navigate('artists');
-  $('[data-artist-play]').onclick=()=>playTrack(tracks.find(t=>!t.pending));
-  $('[data-artist-shuffle]').onclick=()=>{const playable=tracks.filter(t=>!t.pending);if(playable.length)playTrack(playable[Math.floor(Math.random()*playable.length)])};
+  $('[data-artist-play]').onclick=()=>playTrackQueue(tracks);
+  $('[data-artist-shuffle]').onclick=()=>playTrackQueue(tracks,true);
   $('[data-artist-image]').onclick=()=>editArtistImage(name);
 }
 
@@ -466,7 +466,7 @@ function playlistContext(id, x, y) {
   const playlist=customPlaylists.find(p=>p.id===id);if(!playlist)return;
   showContextMenu([
     {label:'Open playlist',icon:'playlist',action:()=>openPlaylist(id)},
-    {label:'Play',icon:'play',action:()=>{const t=playlistTracks(playlist).find(x=>!x.pending);t?playTrack(t):toast('No playable tracks')}},
+    {label:'Play',icon:'play',action:()=>playTrackQueue(playlistTracks(playlist))},
     {label:'Rename',icon:'settings',action:()=>renamePlaylist(id)},
     {separator:true},
     {label:'Delete playlist',icon:'close',danger:true,action:()=>confirmRemove('Delete playlist?',`“${playlist.title}” will be removed. Your music files will not be deleted.`,()=>{customPlaylists=customPlaylists.filter(p=>p.id!==id);saveLibrary();navigate('playlists');toast('Playlist removed')})}
@@ -477,7 +477,7 @@ function albumContext(id,x,y) {
   const album=albumById(id);if(!album)return;
   showContextMenu([
     {label:'Open album',icon:'albums',action:()=>openAlbumDetail(id)},
-    {label:'Play album',icon:'play',action:()=>{const t=album.tracks.find(x=>!x.pending);if(t)playTrack(t)}},
+    {label:'Play album',icon:'play',action:()=>playTrackQueue(album.tracks)},
     {label:'Add album to playlist',icon:'playlist',action:()=>addAlbumToPlaylist(album)},
     {label:'Edit album',icon:'settings',action:()=>editAlbum(id)},
     {label:'Pull metadata & art',icon:'spark',action:()=>metadataLookup(album)},
@@ -491,7 +491,7 @@ function artistContext(name,x,y) {
   const artistAlbums=albums.filter(a=>a.artist===name),tracks=artistAlbums.flatMap(a=>a.tracks);
   showContextMenu([
     {label:'Open artist',icon:'artist',action:()=>openArtistDetail(name)},
-    {label:'Play artist',icon:'play',action:()=>playTrack(tracks.find(t=>!t.pending))},
+    {label:'Play artist',icon:'play',action:()=>playTrackQueue(tracks)},
     {label:'Edit artist image',icon:'image',action:()=>editArtistImage(name)},
     {label:'Rename artist',icon:'settings',action:()=>{openModal(`<div class="modal-head"><h2>Rename artist</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><div class="field"><label>ARTIST NAME</label><input id="artistName" value="${esc(name)}"></div></div><div class="modal-actions"><button class="ghost close-modal">Cancel</button><button class="primary" id="saveArtist">Save</button></div>`,true);$('#saveArtist').onclick=()=>{const next=$('#artistName').value.trim()||name,oldKey=artistProfileKey(name),nextKey=artistProfileKey(next);artistAlbums.forEach(a=>{a.artist=next;a.tracks.forEach(t=>t.artist=next)});if(oldKey!==nextKey&&artistProfiles[oldKey]){artistProfiles[nextKey]={...artistProfiles[oldKey],...(artistProfiles[nextKey]||{})};delete artistProfiles[oldKey]}saveLibrary();closeModal();currentView=`artist:${encodeURIComponent(next)}`;renderArtistDetail(next);toast('Artist updated')}}},
     {separator:true},
@@ -740,7 +740,7 @@ function openMasterPlaylistModal(sourceId,targetId){
 }
 function newPlaylistModal(){openModal(`<div class="modal-head"><h2>New playlist</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><div class="field"><label>PLAYLIST NAME</label><input id="playlistName" placeholder="Untitled playlist" autofocus></div></div><div class="modal-actions"><button class="ghost close-modal">Cancel</button><button class="primary" id="makePlaylist">Create</button></div>`,true);$('#makePlaylist').onclick=()=>{const title=$('#playlistName').value.trim()||'Untitled playlist';const playlist={id:`playlist-${Date.now()}`,title,trackIds:[],color:'#6f8fab'};customPlaylists.unshift(playlist);saveLibrary();closeModal();openPlaylist(playlist.id);toast('Playlist created',title)}}
 
-function openTrackCollection(title,tracks){openModal(`<div class="modal-head"><h2>${esc(title)}</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body" style="padding-top:10px">${songTable(tracks)}</div><div class="modal-actions"><button class="primary" id="playCollection">${icon('play')} Play all</button></div>`);$('#playCollection').onclick=()=>{const playable=tracks.find(t=>!t.pending);if(playable)playTrack(playable);closeModal()}}
+function openTrackCollection(title,tracks){openModal(`<div class="modal-head"><h2>${esc(title)}</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body" style="padding-top:10px">${songTable(tracks)}</div><div class="modal-actions"><button class="primary" id="playCollection">${icon('play')} Play all</button></div>`);$('#playCollection').onclick=()=>{playTrackQueue(tracks);closeModal()}}
 
 async function detectPlaylistTracks(file){
   if(!('TextDetector' in window)||!window.createImageBitmap)return null;
@@ -1004,7 +1004,7 @@ document.addEventListener('click',e=>{
   const newBtn=e.target.closest('[data-action="new-playlist"]');if(newBtn)newPlaylistModal();
   const importBtn=e.target.closest('[data-import]');if(importBtn){importBtn.dataset.import==='folder'?chooseFolder():chooseFiles()}
   const edit=e.target.closest('[data-edit-album]');if(edit){e.stopPropagation();editAlbum(edit.dataset.editAlbum)}
-  const play=e.target.closest('[data-play-album]');if(play){e.stopPropagation();playTrack(albumById(play.dataset.playAlbum)?.tracks[0])}
+  const play=e.target.closest('[data-play-album]');if(play){e.stopPropagation();playTrackQueue(albumById(play.dataset.playAlbum)?.tracks||[])}
   const album=e.target.closest('.album-card');if(album&&!e.target.closest('button'))openAlbumDetail(album.dataset.album);
   const row=e.target.closest('[data-track]');if(row&&!e.target.closest('button')){const t=allTracks().find(x=>x.id===row.dataset.track);if(t)playTrack(t)}
   const rowAction=e.target.closest('[data-row-action]');if(rowAction){const t=allTracks().find(x=>x.id===rowAction.dataset.rowAction),rect=rowAction.getBoundingClientRect();if(t)trackContext(t,rect.right-205,rect.bottom+4)}
@@ -1026,7 +1026,7 @@ $('#playBtn').onclick=togglePlay;$('#fullPlay').onclick=togglePlay;$('#prevBtn')
 audio.onplay=()=>setPlaying(true);audio.onpause=()=>setPlaying(false);audio.onended=()=>nextTrack(1);audio.ontimeupdate=()=>{if(!audio.duration)return;const p=audio.currentTime/audio.duration*100;setRange($('#progress'),p);$('#elapsed').textContent=formatTime(audio.currentTime);$('#duration').textContent=formatTime(audio.duration)};
 $('#progress').oninput=e=>{setRange(e.target,e.target.value);if(currentTrack?.url&&audio.duration)audio.currentTime=audio.duration*e.target.value/100;else simProgress=Number(e.target.value)};
 $('#volume').oninput=e=>{setRange(e.target,e.target.value);settings.volume=Number(e.target.value);audio.volume=settings.volume/100;saveLibrary()};
-$('#shuffleBtn').onclick=()=>{const tracks=allTracks().filter(t=>!t.pending);if(!tracks.length){toast('Nothing to shuffle','Import music first.');return}playTrack(tracks[Math.floor(Math.random()*tracks.length)]);toast('Shuffling your library')};
+$('#shuffleBtn').onclick=()=>{const tracks=allTracks();if(!tracks.some(t=>!t.pending)){toast('Nothing to shuffle','Import music first.');return}playTrackQueue(tracks,true);toast('Shuffling your library')};
 $('#searchInput').oninput=e=>{if(currentView==='albums')renderAlbums(e.target.value);else if(currentView==='artists')renderArtists(e.target.value);else if(currentView==='songs')renderSongs(e.target.value)};
 $('#searchInput').addEventListener('keydown',e=>{if(e.key==='Escape'){e.target.value='';render()}});
 $$('.full-mode button').forEach(btn=>btn.onclick=()=>setFullscreenMode(btn.dataset.mode));
