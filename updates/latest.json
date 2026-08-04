@@ -1,9 +1,9 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.25",
-  "publishedAt": "2026-08-04T04:28:55.8026046Z",
+  "version": "0.1.26",
+  "publishedAt": "2026-08-04T04:43:53.3514885Z",
   "notes": "Greatly improved existing music-video discovery with direct multi-query YouTube search, metadata normalization, official artist and VEVO ranking, duration-aware matching, strict filtering for covers, reactions, lyric videos, audio-only uploads, remixes, and live performances, plus a Try Another Result fallback. Earlier negative and pending-AI searches are automatically retried with the new finder.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.25/Firefly-0.1.25-Setup.exe",
-  "sha256": "9C2CC00F5F9036ECEDE806BB98F8A83C4D6598D12203BD7883F561FBEAF5D410"
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.26/Firefly-0.1.26-Setup.exe",
+  "sha256": "8CE7D321A4B1B56BEC85A639578B22F929EDFB4B7CF963A12A12BCD78D4563A4"
 }
