@@ -3,7 +3,7 @@
   "branch": "beta",
   "version": "0.1.28",
   "publishedAt": "2026-08-04T22:02:33.2584009Z",
-  "notes": "Repairs animated artist-image discovery with Wikimedia, GIPHY, and Tenor results; themes full artist pages from the selected portrait; adds drag ordering and seven persistent playlist sorts with playback that follows the visible order; activates Album Grid/List and all album filters; and rebuilds Settings into five functional tabs with extensive appearance, quality-of-life, library, privacy, queue, and audio controls.",
+  "notes": "Adds first-class cloud music sync for OneDrive, Dropbox, Google Drive, iCloud Drive, Box, Nextcloud, and other Windows-synced folders. Linked sources are watched and periodically reconciled; supported audio, embedded metadata, artwork, lyrics, album grouping, additions, edits, and removals flow into Firefly automatically without touching the cloud originals.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.28/Firefly-0.1.28-Setup.exe",
   "sha256": "9DD58C8C14319BC7809223FFB06EEBF9FAA910E7A7F5B9B2F13BA8A373A652AB"
 }

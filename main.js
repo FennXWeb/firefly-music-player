@@ -517,7 +517,10 @@ async function entryFor(filePath, root = '') {
           fetchedAt: Date.now()
         } : null
       };
-    } catch { entry.metadata = null; }
+    } catch (error) {
+      entry.metadata = null;
+      entry.metadataError = String(error?.code || error?.message || 'Metadata unavailable').slice(0, 180);
+    }
   }
   return entry;
 }
@@ -530,10 +533,10 @@ async function scanFolder(root, options = {}) {
       if (item.isDirectory()) await walk(fullPath);
       else if (audioExtensions.has(path.extname(item.name).toLowerCase()) || imageExtensions.has(path.extname(item.name).toLowerCase())) {
         if (!options.live) { results.push(await entryFor(fullPath, root));continue; }
-        const stats=await fs.stat(fullPath),cacheKey=path.normalize(fullPath).toLowerCase(),cached=liveEntryCache.get(cacheKey);
+        const stats=await fs.stat(fullPath),cacheKey=path.normalize(fullPath).toLowerCase(),cached=liveEntryCache.get(cacheKey),retryFailedMetadata=options.cloud&&cached?.entry?.kind==='audio'&&cached.entry.metadataError&&Date.now()-(cached.checkedAt||0)>5*60*1000;
         let entry;
-        if(cached&&cached.modifiedAt===stats.mtimeMs&&cached.size===stats.size)entry={...cached.entry};
-        else{entry=await entryFor(fullPath,root);entry.modifiedAt=stats.mtimeMs;entry.size=stats.size;liveEntryCache.set(cacheKey,{modifiedAt:stats.mtimeMs,size:stats.size,entry})}
+        if(cached&&cached.modifiedAt===stats.mtimeMs&&cached.size===stats.size&&!retryFailedMetadata)entry={...cached.entry};
+        else{entry=await entryFor(fullPath,root);entry.modifiedAt=stats.mtimeMs;entry.size=stats.size;liveEntryCache.set(cacheKey,{modifiedAt:stats.mtimeMs,size:stats.size,checkedAt:Date.now(),entry})}
         results.push(entry);
       }
     }
@@ -542,18 +545,34 @@ async function scanFolder(root, options = {}) {
   return results;
 }
 
-function liveFolderId(root=''){return`live-${crypto.createHash('sha1').update(path.normalize(root).toLowerCase()).digest('hex').slice(0,16)}`}
+function detectCloudProvider(root=''){
+  const value=path.normalize(String(root)).toLowerCase();
+  if(value.includes('onedrive'))return'OneDrive';
+  if(value.includes('dropbox'))return'Dropbox';
+  if(value.includes('google drive')||value.includes('googledrive')||value.includes('drivefs'))return'Google Drive';
+  if(value.includes('icloud'))return'iCloud Drive';
+  if(value.includes('nextcloud'))return'Nextcloud';
+  if(value.includes('pcloud'))return'pCloud';
+  if(value.includes('mega'))return'MEGA';
+  if(value.includes('box'))return'Box';
+  if(value.includes('syncthing'))return'Syncthing';
+  if(value.startsWith('\\\\'))return'Network cloud';
+  return'Cloud storage';
+}
+function liveFolderId(root='',kind='live'){return`${kind==='cloud'?'cloud':'live'}-${crypto.createHash('sha1').update(path.normalize(root).toLowerCase()).digest('hex').slice(0,16)}`}
 function normalizedLiveFolder(folder={}){
   const root=path.resolve(String(folder.path||folder.root||''));
-  return{id:String(folder.id||liveFolderId(root)),path:root,name:String(folder.name||path.basename(root)||'Live folder'),addedAt:Number(folder.addedAt)||Date.now()};
+  const kind=folder.kind==='cloud'?'cloud':'live',provider=kind==='cloud'?String(folder.provider||detectCloudProvider(root)):'';
+  return{id:String(folder.id||liveFolderId(root,kind)),path:root,name:String(folder.name||path.basename(root)||(kind==='cloud'?'Cloud music':'Live folder')),kind,provider,addedAt:Number(folder.addedAt)||Date.now()};
 }
 async function liveFolderSnapshot(folder={}){
   const normalized=normalizedLiveFolder(folder),scannedAt=Date.now();
   try{
     const stats=await fs.stat(normalized.path);if(!stats.isDirectory())throw new Error('The saved path is not a folder.');
-    const entries=await scanFolder(normalized.path,{live:true});
+    const entries=await scanFolder(normalized.path,{live:true,cloud:normalized.kind==='cloud'});
     entries.forEach(entry=>{entry.liveFolderId=normalized.id;entry.liveTrackId=`live-track-${crypto.createHash('sha1').update(`${normalized.id}\0${String(entry.relativePath||entry.name).toLowerCase()}`).digest('hex').slice(0,20)}`});
-    return{ok:true,folder:{...normalized,status:'synced',lastSyncedAt:scannedAt,trackCount:entries.filter(entry=>entry.kind==='audio').length},entries,scannedAt};
+    const audioEntries=entries.filter(entry=>entry.kind==='audio');
+    return{ok:true,folder:{...normalized,status:'synced',lastSyncedAt:scannedAt,trackCount:audioEntries.length,metadataPending:audioEntries.filter(entry=>entry.metadataError).length},entries,scannedAt};
   }catch(error){return{ok:false,folder:{...normalized,status:'offline',lastCheckedAt:scannedAt},entries:[],scannedAt,error:error?.message||'The folder could not be scanned.'}}
 }
 function closeLiveFolderWatcher(id){
@@ -697,6 +716,12 @@ app.whenReady().then(() => {
     const result=await dialog.showOpenDialog({title:'Add a live music folder',properties:['openDirectory']});
     if(result.canceled||!result.filePaths[0])return null;
     const folder=normalizedLiveFolder({path:result.filePaths[0],addedAt:Date.now()});registerLiveFolder(folder,event.sender);return liveFolderSnapshot(folder);
+  });
+  ipcMain.handle('library:add-cloud-source', async event => {
+    const result=await dialog.showOpenDialog({title:'Link a cloud-synced music folder',buttonLabel:'Link cloud folder',properties:['openDirectory'],message:'Choose a folder inside OneDrive, Dropbox, Google Drive, iCloud Drive, or another locally synced cloud provider.'});
+    if(result.canceled||!result.filePaths[0])return null;
+    const root=result.filePaths[0],folder=normalizedLiveFolder({path:root,name:path.basename(root),kind:'cloud',provider:detectCloudProvider(root),addedAt:Date.now()});
+    registerLiveFolder(folder,event.sender);return liveFolderSnapshot(folder);
   });
   ipcMain.handle('library:sync-live-folders', async (event, folders) => syncLiveFolders(folders,event.sender));
   ipcMain.handle('library:rescan-live-folder', async (event, folder) => {const record=registerLiveFolder(folder,event.sender);return liveFolderSnapshot(record.folder)});

@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('firefly', {
   chooseMusicFiles: () => ipcRenderer.invoke('library:choose-files'),
   chooseMusicFolder: () => ipcRenderer.invoke('library:choose-folder'),
   addLiveFolder: () => ipcRenderer.invoke('library:add-live-folder'),
+  addCloudSource: () => ipcRenderer.invoke('library:add-cloud-source'),
   syncLiveFolders: folders => ipcRenderer.invoke('library:sync-live-folders', folders),
   rescanLiveFolder: folder => ipcRenderer.invoke('library:rescan-live-folder', folder),
   removeLiveFolder: id => ipcRenderer.invoke('library:remove-live-folder', id),
