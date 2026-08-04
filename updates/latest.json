@@ -1,9 +1,9 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.13",
-  "publishedAt": "2026-08-04T00:50:23.1154417Z",
+  "version": "0.1.14",
+  "publishedAt": "2026-08-04T01:04:55.0309129Z",
   "notes": "Test-channel build with collection-scoped Play and Shuffle queues.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.13/Firefly-0.1.13-Windows.exe",
-  "sha256": "E3652021DCF1066F1B1811ADD85273059A4643AB485F7965DBE844B089AD6E19"
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.14/Firefly-0.1.14-Windows.exe",
+  "sha256": "4388395683BD7D6DFC1D95EDD935623FD4D45A580FEF89FCF2B0491D19A9BEFB"
 }
