@@ -1,0 +1,9 @@
+{
+  "channel": "stable",
+  "branch": "main",
+  "version": "0.1.12",
+  "publishedAt": "2026-08-03T00:00:00Z",
+  "notes": "Initial stable release with automatic GitHub update checks.",
+  "downloadUrl": "",
+  "sha256": ""
+}

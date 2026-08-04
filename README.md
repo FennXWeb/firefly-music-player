@@ -1,0 +1,36 @@
+# Firefly Music
+
+Firefly is a local-first, highly customizable music player concept for Windows. It runs as an Electron desktop app or directly in a modern browser.
+
+## Run
+
+- Standalone executable: open the latest `release/Firefly-*-Windows.exe` after running `npm run dist:win`.
+- Instant Windows preview: right-click `start-firefly.ps1` and choose **Run with PowerShell**.
+- Electron: run `npm install`, then `npm start`.
+- Browser: open `index.html`.
+
+## Implemented in this prototype
+
+- Audio import for MP3, WAV, FLAC, M4A, AAC, OGG, and OPUS, with local playback.
+- Album, artist, and track editing, including cover and full-case artwork slots.
+- Metadata lookup flow with selectable artwork candidates.
+- Album shelf mode with drag sorting and an animated, openable jewel case.
+- Fullscreen player with visualizer and generated-video queue states.
+- Nested master playlists, drag-to-group interactions, and smart playlists.
+- Screenshot-to-playlist workflow with pending tracks and import actions.
+- OpenAI, metadata-provider, and Suno integration settings.
+
+## Persistent data
+
+Firefly stores the library database, playlists, shelves, artwork references, and settings in `%APPDATA%\firefly-music\Data`. This profile is independent of the portable executable and remains in place when Firefly is rebuilt or upgraded. Existing browser-local Firefly data is migrated into the durable database on first launch.
+
+OpenAI and provider tokens are kept in a separate credentials file and protected with Electron's Windows-backed `safeStorage` encryption. Keys are never stored in the app source or release directory.
+
+## Update channels
+
+Firefly checks for updates on startup and every 30 minutes while running. The channel can be changed in Settings:
+
+- **Stable** reads `updates/latest.json` from the `main` branch.
+- **Test** reads `updates/latest.json` from the `beta` branch.
+
+Update downloads are accepted only from GitHub release hosts. If a manifest includes a SHA-256 checksum, Firefly verifies the complete download before offering to launch it. Portable builds keep using the same persistent data directory after an update.
