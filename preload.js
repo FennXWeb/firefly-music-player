@@ -22,5 +22,6 @@ contextBridge.exposeInMainWorld('firefly', {
   downloadUpdate: channel => ipcRenderer.invoke('update:download', channel),
   launchUpdate: () => ipcRenderer.invoke('update:launch'),
   onUpdateProgress: callback => { const listener = (_event, progress) => callback(progress); ipcRenderer.on('update:progress', listener); return () => ipcRenderer.removeListener('update:progress', listener); },
+  onUpdateReady: callback => { const listener = (_event, update) => callback(update); ipcRenderer.on('update:ready', listener); return () => ipcRenderer.removeListener('update:ready', listener); },
   platform: process.platform
 });

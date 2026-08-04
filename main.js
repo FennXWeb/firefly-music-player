@@ -2,6 +2,7 @@ const { app, BrowserWindow, shell, dialog, ipcMain, safeStorage, session, net } 
 const path = require('path');
 const fs = require('fs/promises');
 const crypto = require('crypto');
+const { spawn } = require('child_process');
 const { pathToFileURL, fileURLToPath } = require('url');
 const AdmZip = require('adm-zip');
 
@@ -24,7 +25,7 @@ const zipImportDirectory = path.join(dataDirectory, 'zip-imports');
 const apiPassBaseUrl = 'https://api.apipass.dev';
 const updateRepository = 'FennXWeb/firefly-music-player';
 const updateBranches = { stable: 'main', beta: 'beta' };
-let downloadedUpdatePath = '';
+let preparedUpdate = null;
 
 const audioExtensions = new Set(['.mp3','.wav','.flac','.m4a','.aac','.ogg','.opus','.wma']);
 const imageExtensions = new Set(['.jpg','.jpeg','.png','.webp','.bmp']);
@@ -94,12 +95,15 @@ async function downloadUpdate(webContents,channel='stable') {
   await fs.mkdir(updatesDirectory,{recursive:true});
   const finalPath=path.join(updatesDirectory,`Firefly-${safeFileStem(update.version)}-Setup.exe`),temporaryPath=`${finalPath}.download`;
   const handle=await fs.open(temporaryPath,'w'),reader=response.body.getReader(),hash=crypto.createHash('sha256'),total=Number(response.headers.get('content-length'))||0;let received=0;
-  try{while(true){const{done,value}=await reader.read();if(done)break;const chunk=Buffer.from(value);await handle.write(chunk);hash.update(chunk);received+=chunk.length;webContents.send('update:progress',{received,total,percent:total?Math.round(received/total*100):null})}}catch(error){await handle.close();await fs.rm(temporaryPath,{force:true});throw error}
+  try{while(true){const{done,value}=await reader.read();if(done)break;const chunk=Buffer.from(value);await handle.write(chunk);hash.update(chunk);received+=chunk.length;if(!webContents.isDestroyed())webContents.send('update:progress',{stage:'downloading',received,total,percent:total?Math.round(received/total*100):null})}}catch(error){await handle.close();await fs.rm(temporaryPath,{force:true});throw error}
   await handle.close();
   const digest=hash.digest('hex').toUpperCase();
   if(update.sha256&&digest!==update.sha256){await fs.rm(temporaryPath,{force:true});throw new Error('The update failed its integrity check and was discarded.');}
-  await fs.rm(finalPath,{force:true});await fs.rename(temporaryPath,finalPath);downloadedUpdatePath=finalPath;
-  return{...update,fileName:path.basename(finalPath),sha256:digest};
+  await fs.rm(finalPath,{force:true});await fs.rename(temporaryPath,finalPath);
+  if(!webContents.isDestroyed())webContents.send('update:progress',{stage:'installing',received,total,percent:100});
+  preparedUpdate={...update,fileName:path.basename(finalPath),filePath:finalPath,sha256:digest,installed:true,preparedAt:Date.now()};
+  if(!webContents.isDestroyed())webContents.send('update:ready',preparedUpdate);
+  return preparedUpdate;
 }
 function safeFileStem(value = '') {
   return String(value).toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'album';
@@ -201,13 +205,13 @@ async function cacheArtistImage(options = {}) {
   const response = await net.fetch(source.href);
   if (!response.ok) throw new Error(`Artist image download failed (${response.status}).`);
   const contentType = response.headers.get('content-type')?.split(';')[0]?.toLowerCase() || '';
-  if (!['image/jpeg','image/png','image/webp'].includes(contentType)) throw new Error('The selected result is not a supported image.');
+  if (!['image/jpeg','image/png','image/webp','image/gif'].includes(contentType)) throw new Error('The selected result is not a supported image.');
   const buffer = Buffer.from(await response.arrayBuffer());
-  if (!buffer.length || buffer.length > 15 * 1024 * 1024) throw new Error('Artist images must be smaller than 15 MB.');
-  const extension = contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : 'jpg';
+  if (!buffer.length || buffer.length > 30 * 1024 * 1024) throw new Error('Artist images and GIFs must be smaller than 30 MB.');
+  const extension = contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : contentType === 'image/gif' ? 'gif' : 'jpg';
   const filePath = path.join(artistArtDirectory, `${safeFileStem(options.artist)}.${extension}`);
   await writeBufferAtomic(filePath, buffer);
-  return { imageUrl: pathToFileURL(filePath).href, cachedAt: new Date().toISOString() };
+  return { imageUrl: pathToFileURL(filePath).href, cachedAt: new Date().toISOString(), animated:contentType==='image/gif' };
 }
 async function fetchArtistJson(url) {
   const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 8500);
@@ -218,6 +222,11 @@ async function fetchArtistJson(url) {
   } finally { clearTimeout(timeout); }
 }
 function normalizedArtistName(value = '') { return String(value).normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/gi, ' ').trim().toLowerCase(); }
+async function searchWikimediaAnimatedArtistImages(artist=''){
+  const params=new URLSearchParams({action:'query',generator:'search',gsrsearch:`"${artist}" animated gif`,gsrnamespace:'6',gsrlimit:'32',prop:'imageinfo',iiprop:'url|mime|size|extmetadata',format:'json',origin:'*'});
+  const body=await fetchArtistJson(`https://commons.wikimedia.org/w/api.php?${params}`),pages=Object.values(body?.query?.pages||{});
+  return pages.map(page=>{const info=page.imageinfo?.[0];if(info?.mime!=='image/gif'||!info.url)return null;const metadata=info.extmetadata||{},clean=value=>String(value||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();return{image:info.url,sourceUrl:info.descriptionurl||`https://commons.wikimedia.org/wiki/${encodeURIComponent(page.title.replaceAll(' ','_'))}`,sourceLabel:'Wikimedia GIF',label:clean(metadata.ObjectName?.value)||page.title.replace(/^File:/,''),description:clean(metadata.ImageDescription?.value)||`Animated artist image for ${artist}`,animated:true,width:info.width||null,height:info.height||null}}).filter(Boolean).slice(0,10);
+}
 async function searchSupplementalArtistImages(artist = '') {
   artist = String(artist).trim().slice(0, 160);
   if (!artist) return [];
@@ -236,7 +245,8 @@ async function searchSupplementalArtistImages(artist = '') {
         if (item.strArtistWideThumb) results.push({ image: item.strArtistWideThumb, sourceUrl, sourceLabel: 'TheAudioDB', label: item.strArtist || artist, description: 'Wide artist photograph' });
       }
       return results.slice(0, 6);
-    })
+    }),
+    searchWikimediaAnimatedArtistImages(artist)
   ]);
   return sources.flatMap(result => result.status === 'fulfilled' ? result.value : []);
 }
@@ -586,10 +596,10 @@ app.whenReady().then(() => {
   ipcMain.handle('update:check', async (_event, channel) => checkForUpdates(channel));
   ipcMain.handle('update:download', async (event, channel) => downloadUpdate(event.sender,channel));
   ipcMain.handle('update:launch', async () => {
-    if(!downloadedUpdatePath)throw new Error('Download an update first.');
-    try{if((await fs.stat(downloadedUpdatePath)).size<1024)throw new Error('The downloaded update is incomplete.')}catch(error){downloadedUpdatePath='';throw error}
-    const result=await shell.openPath(downloadedUpdatePath);if(result)throw new Error(result);
-    setTimeout(()=>app.quit(),600);return true;
+    if(!preparedUpdate?.installed)throw new Error('Finish preparing the update first.');
+    try{if((await fs.stat(preparedUpdate.filePath)).size<1024)throw new Error('The prepared update is incomplete.')}catch(error){preparedUpdate=null;throw error}
+    await new Promise((resolve,reject)=>{const installer=spawn(preparedUpdate.filePath,['/S','--updated','--force-run'],{detached:true,windowsHide:true,stdio:'ignore'});installer.once('error',error=>reject(new Error(`The silent updater could not start: ${error.message}`)));installer.once('spawn',()=>{installer.unref();resolve()})});
+    setTimeout(()=>app.exit(0),220);return true;
   });
   createWindow();
   app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow());

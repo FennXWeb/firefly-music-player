@@ -17,7 +17,7 @@ const defaultSettings = {
   accent: '#f55f45', accentRgb: '245,95,69', ambient: true,
   reducedMotion: false, gapless: true, crossfade: 40, volume: 72,
   muted: false, shuffle: false, repeatMode: 'off', songSort: 'added-desc', dynamicArtByDefault: false,
-  sunoEndpoint: 'https://api.apipass.dev', sunoModel: 'V5_5', sunoChannel: 'auto', updateChannel: 'stable'
+  sunoEndpoint: 'https://api.apipass.dev', sunoModel: 'V5_5', sunoChannel: 'auto', updateChannel: 'stable', visualizerStyle:'waves'
 };
 let settings = { ...defaultSettings };
 let credentials = { openaiKey: '', sunoToken: '' };
@@ -55,9 +55,12 @@ let screenshotData = null;
 let playlistImportTarget = null;
 let videoLookupToken = 0;
 let fullscreenMode = 'visualizer';
+let visualizerStyle = 'waves';
 let activeLyricIndex = -1;
 let updateState = { status:'idle', channel:'stable', available:false, progress:null };
 let updateCheckTimer = null;
+let updateRestartPromptedVersion = '';
+let pendingUpdateRestartPrompt = false;
 let volumePersistenceTimer = null;
 let dynamicDefaultQueue = Promise.resolve();
 let libraryRevision = 0;
@@ -192,6 +195,8 @@ function applySavedState(saved = {}) {
   settings = { ...defaultSettings, ...(saved.settings || {}) };
   settings.sunoEndpoint = defaultSettings.sunoEndpoint;
   settings.repeatMode = ['off','all','one'].includes(settings.repeatMode) ? settings.repeatMode : 'off';
+  settings.visualizerStyle=['waves','orbit','spectrum'].includes(settings.visualizerStyle)?settings.visualizerStyle:'waves';
+  visualizerStyle=settings.visualizerStyle;
   shuffleEnabled = Boolean(settings.shuffle);
   repeatMode = settings.repeatMode;
   lastAudibleVolume = settings.volume>0?settings.volume:72;
@@ -205,6 +210,7 @@ function applySettings() {
   audio.volume = settings.muted ? 0 : settings.volume / 100;
   updatePlaybackModeControls();
   updateVolumeControls();
+  updateVisualizerControls();
 }
 async function initializePersistence() {
   let durableState = null;
@@ -244,32 +250,35 @@ function toast(title, detail = '') {
 function updateChannelLabel(channel=settings.updateChannel){return channel==='beta'?'Test · beta':'Stable · main'}
 function renderUpdateWidget(){
   const widget=$('#updateWidget');if(!widget)return;
-  const labels={idle:'Updates',checking:'Checking for updates',current:'Firefly is up to date',available:`Version ${updateState.version} available`,downloading:updateState.progress==null?'Downloading update':`Downloading · ${updateState.progress}%`,ready:'Update ready to launch',error:'Update check unavailable'};
+  const labels={idle:'Updates',checking:'Checking for updates',current:'Firefly is up to date',available:`Version ${updateState.version} available`,downloading:updateState.progress==null?'Downloading update':`Downloading · ${updateState.progress}%`,installing:'Preparing update',ready:'Restart to apply update',error:'Update check unavailable'};
   widget.className=`update-widget ${updateState.status}`;widget.innerHTML=`${icon(updateState.status==='available'||updateState.status==='ready'?'spark':'upload')}<span><b>${labels[updateState.status]||labels.idle}</b><small>${updateChannelLabel(updateState.channel)}</small></span><i></i>`;
   widget.setAttribute('aria-label',`${labels[updateState.status]||labels.idle}. ${updateChannelLabel(updateState.channel)}`);
 }
 async function checkForUpdates(manual=false){
+  if(['downloading','installing','ready'].includes(updateState.status)){if(manual)openUpdateModal();return}
   if(!window.firefly?.checkForUpdates){updateState={status:'error',channel:settings.updateChannel,error:'Updates are available in the Windows app.'};renderUpdateWidget();return}
   updateState={...updateState,status:'checking',channel:settings.updateChannel,progress:null};renderUpdateWidget();
   try{const result=await window.firefly.checkForUpdates(settings.updateChannel);updateState={...result,status:result.available?'available':'current',progress:null};renderUpdateWidget();if(currentView==='settings')renderSettings();if(manual)toast(result.available?`Firefly ${result.version} is available`:'Firefly is up to date',updateChannelLabel(result.channel))}
   catch(error){updateState={status:'error',channel:settings.updateChannel,available:false,error:error?.message||'Update check failed.'};renderUpdateWidget();if(currentView==='settings')renderSettings();if(manual)toast('Could not check for updates',updateState.error)}
 }
 function updateModalMarkup(){
-  const status=updateState.status,available=status==='available',downloading=status==='downloading',ready=status==='ready';
-  const title=available?`Firefly ${esc(updateState.version)} is available`:ready?'Update ready':downloading?'Downloading update':status==='current'?'You’re up to date':'Firefly updates';
-  const detail=available?(updateState.notes||`A new ${updateChannelLabel(updateState.channel).toLowerCase()} build is ready.`):ready?`${updateState.fileName} passed its integrity check and is ready to launch.`:downloading?'Keep Firefly open while the Windows build downloads.':status==='error'?updateState.error:`Firefly checks the ${updateChannelLabel(updateState.channel)} channel automatically.`;
-  return `<div class="modal-head"><h2>${title}</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><div class="update-modal-hero ${status}">${icon(available||ready?'spark':'upload')}<div><span>${updateChannelLabel(updateState.channel)}</span><p>${esc(detail)}</p></div></div>${downloading?`<div class="update-progress"><span><i style="width:${updateState.progress||0}%"></i></span><small>${updateState.progress==null?'Preparing download…':`${updateState.progress}% downloaded`}</small></div>`:''}</div><div class="modal-actions"><button class="ghost close-modal">Close</button>${available?`<button class="primary" id="downloadUpdate">${icon('upload')} Download update</button>`:''}${ready?`<button class="primary" id="launchUpdate">Launch and restart</button>`:''}${['current','error','idle'].includes(status)?`<button class="primary" id="modalCheckUpdate">Check now</button>`:''}</div>`;
+  const status=updateState.status,available=status==='available',downloading=status==='downloading',installing=status==='installing',ready=status==='ready';
+  const title=available?`Firefly ${esc(updateState.version)} is available`:ready?'Restart to finish updating':installing?'Preparing update':downloading?'Downloading update':status==='current'?'You’re up to date':'Firefly updates';
+  const detail=available?(updateState.notes||`A new ${updateChannelLabel(updateState.channel).toLowerCase()} build is ready.`):ready?`Firefly ${updateState.version||''} downloaded and passed its integrity check. Restart whenever you’re ready; installation is silent and the updated app reopens automatically.`:installing?'Firefly is verifying the download and preparing its silent installer. Music and library activity can continue while this finishes.':downloading?'The update is downloading in the background. You can close this window and keep listening.':status==='error'?updateState.error:`Firefly checks the ${updateChannelLabel(updateState.channel)} channel automatically.`;
+  return `<div class="modal-head"><h2>${title}</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><div class="update-modal-hero ${status}">${icon(available||ready?'spark':'upload')}<div><span>${updateChannelLabel(updateState.channel)}</span><p>${esc(detail)}</p></div></div>${downloading?`<div class="update-progress"><span><i style="width:${updateState.progress||0}%"></i></span><small>${updateState.progress==null?'Preparing download…':`${updateState.progress}% downloaded`}</small></div>`:''}</div><div class="modal-actions"><button class="ghost close-modal">${ready?'Later':'Close'}</button>${available?`<button class="primary" id="downloadUpdate">${icon('upload')} Download & install</button>`:''}${ready?`<button class="primary" id="launchUpdate">Restart Firefly</button>`:''}${['current','error','idle'].includes(status)?`<button class="primary" id="modalCheckUpdate">Check now</button>`:''}</div>`;
 }
 function openUpdateModal(){openModal(updateModalMarkup(),true);if($('#downloadUpdate'))$('#downloadUpdate').onclick=downloadAvailableUpdate;if($('#launchUpdate'))$('#launchUpdate').onclick=launchDownloadedUpdate;if($('#modalCheckUpdate'))$('#modalCheckUpdate').onclick=()=>{closeModal();checkForUpdates(true)}}
 async function downloadAvailableUpdate(){
-  updateState={...updateState,status:'downloading',progress:null};renderUpdateWidget();openUpdateModal();
-  try{const result=await window.firefly.downloadUpdate(updateState.channel);updateState={...updateState,...result,status:'ready',progress:100};renderUpdateWidget();openUpdateModal()}
-  catch(error){updateState={...updateState,status:'error',error:error?.message||'The update could not be downloaded.'};renderUpdateWidget();openUpdateModal()}
+  updateState={...updateState,status:'downloading',progress:null};renderUpdateWidget();closeModal();toast('Update started','Firefly will download and install it in the background.');
+  try{const result=await window.firefly.downloadUpdate(updateState.channel);markUpdateReady(result)}
+  catch(error){updateState={...updateState,status:'error',error:error?.message||'The update could not be prepared.'};renderUpdateWidget();toast('Background update failed',updateState.error)}
 }
-async function launchDownloadedUpdate(){try{await window.firefly.launchUpdate()}catch(error){toast('Could not launch update',error?.message||'Try downloading it again.')}}
+function markUpdateReady(result={}){updateState={...updateState,...result,status:'ready',progress:100};renderUpdateWidget();if(updateRestartPromptedVersion===updateState.version)return;updateRestartPromptedVersion=updateState.version||'ready';if(modalLayer.classList.contains('open'))pendingUpdateRestartPrompt=true;else openUpdateModal();toast('Update ready','Restart Firefly whenever you’re ready to apply it.')}
+async function launchDownloadedUpdate(){const button=$('#launchUpdate');if(button){button.disabled=true;button.textContent='Restarting…'}try{await window.firefly.launchUpdate()}catch(error){if(button)button.disabled=false;toast('Could not restart Firefly',error?.message||'Try again from the update widget.')}}
 function initializeUpdater(){
   updateState.channel=settings.updateChannel==='beta'?'beta':'stable';renderUpdateWidget();
-  if(window.firefly?.onUpdateProgress)window.firefly.onUpdateProgress(progress=>{updateState={...updateState,status:'downloading',progress:progress.percent};renderUpdateWidget();if($('#modalLayer').classList.contains('open')&&$('.update-progress')){const fill=$('.update-progress i'),label=$('.update-progress small');if(fill&&progress.percent!=null)fill.style.width=`${progress.percent}%`;if(label)label.textContent=progress.percent==null?'Downloading update…':`${progress.percent}% downloaded`}});
+  if(window.firefly?.onUpdateProgress)window.firefly.onUpdateProgress(progress=>{const installing=progress.stage==='installing';updateState={...updateState,status:installing?'installing':'downloading',progress:progress.percent};renderUpdateWidget();if($('#modalLayer').classList.contains('open')&&$('.update-progress')){const fill=$('.update-progress i'),label=$('.update-progress small');if(fill&&progress.percent!=null)fill.style.width=`${progress.percent}%`;if(label)label.textContent=installing?'Installing silently…':progress.percent==null?'Downloading update…':`${progress.percent}% downloaded`}});
+  if(window.firefly?.onUpdateReady)window.firefly.onUpdateReady(markUpdateReady);
   checkForUpdates(false);clearInterval(updateCheckTimer);updateCheckTimer=setInterval(()=>checkForUpdates(false),30*60*1000);
 }
 function setRange(el, value) { el.value = value; el.style.setProperty('--range', `${value}%`); }
@@ -351,7 +360,7 @@ function artistProfile(name){return artistProfiles[artistProfileKey(name)]||{}}
 function artistPortraitClass(name){const score=[...String(name)].reduce((sum,char)=>sum+char.charCodeAt(0),0);return`portrait-${score%6+1}`}
 function artistPortraitMarkup(name,extra=''){
   const profile=artistProfile(name),style=profile.image?`style="background-image:url(&quot;${esc(profile.image)}&quot;)"`:'';
-  return `<div class="artist-portrait ${profile.image?'has-artist-image':artistPortraitClass(name)} ${extra}" ${style}></div>`;
+  return `<div class="artist-portrait ${profile.image?'has-artist-image':artistPortraitClass(name)} ${profile.animated?'animated-artist-image':''} ${extra}" ${style}></div>`;
 }
 
 function dynamicCaseReady(album) {
@@ -747,9 +756,10 @@ function addAlbumToPlaylist(album) {
 
 function editArtistImage(name){
   const profile=artistProfile(name);
-  openModal(`<div class="modal-head"><h2>Artist image</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><div class="artist-image-editor"><label class="artist-image-slot ${profile.image?'has-image':''}">${profile.image?`<img src="${profile.image}" alt="${esc(name)}">`:artistPortraitMarkup(name,'artist-editor-fallback')}<span>${icon('upload')} Choose an image</span><input type="file" id="artistImageUpload" accept="image/*"></label><div><div class="eyebrow">${esc(name)}</div><h3>Artist portrait</h3><p>Use a square or portrait image. Firefly crops it responsively throughout the artist library.</p><button class="primary" id="findArtistImage">${icon('spark')} Find on the internet</button>${profile.image?`<button class="ghost" id="removeArtistImage">Remove image</button>`:''}</div></div></div><div class="modal-actions"><button class="ghost close-modal">Done</button></div>`);
-  bindArtUpload('#artistImageUpload',data=>{artistProfiles[artistProfileKey(name)]={...profile,image:data,sourceUrl:null,sourceLabel:'Custom upload'};saveLibrary();closeModal();render();toast('Artist image updated',name)});
+  openModal(`<div class="modal-head"><h2>Artist image</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><div class="artist-image-editor"><label class="artist-image-slot ${profile.image?'has-image':''}">${profile.image?`<img src="${profile.image}" alt="${esc(name)}">`:artistPortraitMarkup(name,'artist-editor-fallback')}<span>${icon('upload')} Choose an image or GIF</span><input type="file" id="artistImageUpload" accept="image/*,.gif"></label><div><div class="eyebrow">${esc(name)}${profile.animated?' · ANIMATED':''}</div><h3>Artist portrait</h3><p>Use a still image or animated GIF. Firefly crops it responsively throughout the artist library and fullscreen player.</p><button class="primary" id="findArtistImage">${icon('spark')} Find images</button><button class="ghost" id="findAnimatedArtistImage">${icon('image')} Find animated GIFs</button>${profile.image?`<button class="ghost" id="removeArtistImage">Remove image</button>`:''}</div></div></div><div class="modal-actions"><button class="ghost close-modal">Done</button></div>`);
+  bindArtUpload('#artistImageUpload',data=>{artistProfiles[artistProfileKey(name)]={...profile,image:data,animated:/^data:image\/gif/i.test(data),sourceUrl:null,sourceLabel:/^data:image\/gif/i.test(data)?'Custom GIF':'Custom upload'};saveLibrary();closeModal();render();toast('Artist image updated',name)});
   $('#findArtistImage').onclick=()=>artistImageLookup(name);
+  $('#findAnimatedArtistImage').onclick=()=>artistImageLookup(name,true);
   if($('#removeArtistImage'))$('#removeArtistImage').onclick=()=>{delete artistProfiles[artistProfileKey(name)];saveLibrary();closeModal();render();toast('Artist image removed',name)};
 }
 async function searchWikimediaArtistImages(name){
@@ -769,15 +779,15 @@ async function searchWikimediaArtistImages(name){
     const byFile=new Map(pages.map(page=>[String(page.title||'').replace(/^File:/i,'').replaceAll('_',' '),page.imageinfo?.[0]]));
     return pictured.map(item=>{const info=byFile.get(item.file.replaceAll('_',' '));return info?{...item,image:info.thumburl||info.url,sourceUrl:info.descriptionurl||`https://commons.wikimedia.org/wiki/File:${encodeURIComponent(item.file.replaceAll(' ','_'))}`,sourceLabel:'Wikimedia Commons'} : null}).filter(item=>item?.image).slice(0,6);
 }
-async function artistImageLookup(name){
-  openModal(`<div class="modal-head"><h2>Finding artist images</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><div class="lookup-status"><span class="spinner"></span><span>Searching Wikimedia Commons, Deezer, and TheAudioDB for ${esc(name)}…</span></div></div>`);
-  const searches=await Promise.allSettled([searchWikimediaArtistImages(name),window.firefly?.searchArtistImages?window.firefly.searchArtistImages(name):Promise.resolve([])]);
+async function artistImageLookup(name,animatedOnly=false){
+  openModal(`<div class="modal-head"><h2>${animatedOnly?'Finding animated artist GIFs':'Finding artist images'}</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><div class="lookup-status"><span class="spinner"></span><span>${animatedOnly?'Searching Wikimedia Commons for reusable animated GIFs':'Searching Wikimedia Commons, Deezer, TheAudioDB, and animated GIF sources'} for ${esc(name)}…</span></div></div>`);
+  const searches=await Promise.allSettled([...(animatedOnly?[]:[searchWikimediaArtistImages(name)]),window.firefly?.searchArtistImages?window.firefly.searchArtistImages(name):Promise.resolve([])]);
   const combined=searches.flatMap(result=>result.status==='fulfilled'?result.value:[]),seen=new Set();
-  const results=combined.filter(result=>{if(!result?.image)return false;const key=String(result.image).replace(/^https?:/,'').replace(/[?#].*$/,'').toLowerCase();if(seen.has(key))return false;seen.add(key);return true}).slice(0,15);
-  if(!results.length){openModal(`<div class="modal-head"><h2>No artist image found</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><p class="modal-intro">Wikimedia Commons, Deezer, and TheAudioDB returned no usable images for ${esc(name)}.</p></div><div class="modal-actions"><button class="ghost close-modal">Close</button><button class="primary" id="retryArtistImage">Try again</button></div>`,true);$('#retryArtistImage').onclick=()=>artistImageLookup(name);return}
+  const results=combined.filter(result=>{if(!result?.image||(animatedOnly&&!result.animated))return false;const key=String(result.image).replace(/^https?:/,'').replace(/[?#].*$/,'').toLowerCase();if(seen.has(key))return false;seen.add(key);return true}).slice(0,15);
+  if(!results.length){openModal(`<div class="modal-head"><h2>No ${animatedOnly?'animated GIF':'artist image'} found</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><p class="modal-intro">No reusable ${animatedOnly?'animated artist GIFs':'artist images'} were found for ${esc(name)}. Try a shorter or alternate artist name.</p></div><div class="modal-actions"><button class="ghost close-modal">Close</button><button class="primary" id="retryArtistImage">Try again</button></div>`,true);$('#retryArtistImage').onclick=()=>artistImageLookup(name,animatedOnly);return}
   const sourceNames=[...new Set(results.map(result=>result.sourceLabel).filter(Boolean))];
-  openModal(`<div class="modal-head"><h2>Choose an artist image</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><div class="lookup-status">${icon('spark')}<span>${results.length} options from ${esc(sourceNames.join(', '))}</span></div><div class="artist-image-results">${results.map((result,index)=>`<button data-artist-image-choice="${index}"><span style="background-image:url(&quot;${esc(result.image)}&quot;)"></span><b>${esc(result.label||name)}</b><small>${esc(result.sourceLabel||'Online source')} · ${esc(result.description||'Artist image')}</small></button>`).join('')}</div></div><div class="modal-actions"><button class="ghost close-modal">Cancel</button></div>`);
-  $$('[data-artist-image-choice]',modalLayer).forEach(button=>button.onclick=async()=>{const result=results[Number(button.dataset.artistImageChoice)];button.disabled=true;button.classList.add('loading');try{const cached=window.firefly?.cacheArtistImage?await window.firefly.cacheArtistImage({artist:name,url:result.image}):{imageUrl:result.image};artistProfiles[artistProfileKey(name)]={image:cached.imageUrl,sourceUrl:result.sourceUrl,sourceLabel:result.sourceLabel||'Online source',cachedAt:cached.cachedAt};saveLibrary();closeModal();render();toast('Artist image updated',`${name} · ${result.sourceLabel||'online'} · saved for offline use`)}catch(error){button.disabled=false;button.classList.remove('loading');toast('Could not save artist image',error.message)}});
+  openModal(`<div class="modal-head"><h2>Choose ${animatedOnly?'an animated GIF':'an artist image'}</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><div class="lookup-status">${icon('spark')}<span>${results.length} options from ${esc(sourceNames.join(', '))}</span></div><div class="artist-image-results">${results.map((result,index)=>`<button data-artist-image-choice="${index}" class="${result.animated?'animated-result':''}"><span style="background-image:url(&quot;${esc(result.image)}&quot;)"></span>${result.animated?'<em>ANIMATED GIF</em>':''}<b>${esc(result.label||name)}</b><small>${esc(result.sourceLabel||'Online source')} · ${esc(result.description||'Artist image')}</small></button>`).join('')}</div></div><div class="modal-actions"><button class="ghost close-modal">Cancel</button></div>`);
+  $$('[data-artist-image-choice]',modalLayer).forEach(button=>button.onclick=async()=>{const result=results[Number(button.dataset.artistImageChoice)];button.disabled=true;button.classList.add('loading');try{const cached=window.firefly?.cacheArtistImage?await window.firefly.cacheArtistImage({artist:name,url:result.image}):{imageUrl:result.image,animated:result.animated};artistProfiles[artistProfileKey(name)]={image:cached.imageUrl,animated:Boolean(cached.animated||result.animated),sourceUrl:result.sourceUrl,sourceLabel:result.sourceLabel||'Online source',cachedAt:cached.cachedAt};saveLibrary();closeModal();render();toast(result.animated?'Animated artist image saved':'Artist image updated',`${name} · ${result.sourceLabel||'online'} · available offline`)}catch(error){button.disabled=false;button.classList.remove('loading');toast('Could not save artist image',error.message)}});
 }
 
 function addTrackToPlaylist(track) {
@@ -822,7 +832,7 @@ function renderSettings() {
     <div class="setting-row"><div><b>Dynamic Case Art for new albums</b><small>Automatically extend newly imported cover art into a generated back and spine. Requires your OpenAI API key.</small></div><button class="switch ${settings.dynamicArtByDefault?'on':''}" data-toggle="dynamic-default" aria-label="Toggle Dynamic Case Art for new albums"></button></div>
     <div class="setting-row"><div><b>Audio crossfade</b><small>Blend the final seconds into the next track</small></div><input id="crossfadeSetting" type="range" value="${settings.crossfade}" style="width:170px;--range:${settings.crossfade}%"/></div>
     <div class="setting-row update-setting-row"><div><b>Update channel</b><small>Stable follows main; Test follows the beta branch</small></div><span class="update-setting-controls"><select id="updateChannel"><option value="stable" ${settings.updateChannel!=='beta'?'selected':''}>Stable · main</option><option value="beta" ${settings.updateChannel==='beta'?'selected':''}>Test · beta</option></select><button class="ghost" id="checkForUpdates">Check now</button></span></div>
-    <div class="setting-row"><div><b>Update status</b><small>${updateState.status==='available'?`Version ${esc(updateState.version)} is available`:updateState.status==='error'?esc(updateState.error||'Update check failed'):updateState.status==='checking'?'Checking GitHub now…':updateState.status==='ready'?'Downloaded and ready to launch':'Firefly checks when it opens and every 30 minutes'}</small></div><button class="ghost" id="showUpdateDetails">Details</button></div>
+    <div class="setting-row"><div><b>Update status</b><small>${updateState.status==='available'?`Version ${esc(updateState.version)} is available`:updateState.status==='error'?esc(updateState.error||'Update check failed'):updateState.status==='checking'?'Checking GitHub now…':updateState.status==='downloading'?'Downloading in the background…':updateState.status==='installing'?'Verifying and preparing…':updateState.status==='ready'?'Ready · restart to apply':'Firefly checks when it opens and every 30 minutes'}</small></div><button class="ghost" id="showUpdateDetails">Details</button></div>
     <div class="setting-row"><div><b>Firefly data folder</b><small>${esc(dataDirectory||'Browser local storage')}</small></div><button class="ghost" id="openDataFolder" ${dataDirectory?'':'disabled'}>Open folder</button></div>
   </section></div>`;
   $$('.accent-swatches button',view).forEach(btn=>btn.onclick=()=>{settings.accent=btn.dataset.accent;settings.accentRgb=btn.dataset.rgb;applySettings();$$('.accent-swatches button').forEach(b=>b.classList.remove('active'));btn.classList.add('active');saveLibrary();toast('Accent updated')});
@@ -974,7 +984,7 @@ function openModal(html, narrow=false) {
   $$('.close-modal',modalLayer).forEach(b=>b.onclick=closeModal);
   modalLayer.onclick=e=>{if(e.target===modalLayer)closeModal()};
 }
-function closeModal(){modalLayer.classList.remove('open');modalLayer.setAttribute('aria-hidden','true');setTimeout(()=>modalLayer.innerHTML='',200)}
+function closeModal(){modalLayer.classList.remove('open');modalLayer.setAttribute('aria-hidden','true');setTimeout(()=>{modalLayer.innerHTML='';if(pendingUpdateRestartPrompt&&updateState.status==='ready'){pendingUpdateRestartPrompt=false;openUpdateModal()}},200)}
 
 function editAlbum(id) {
   const a=albumById(id);
@@ -1419,12 +1429,26 @@ function setFullscreenMode(mode){
   else if(currentTrack?.video?.status==='generating')renderVideoStatus('generating',currentTrack.video);
   else if(currentTrack)prepareTrackVideo(currentTrack);
 }
+function updateVisualizerControls(){$$('[data-visualizer]').forEach(button=>button.classList.toggle('active',button.dataset.visualizer===visualizerStyle))}
+function setVisualizerStyle(style){visualizerStyle=['waves','orbit','spectrum'].includes(style)?style:'waves';settings.visualizerStyle=visualizerStyle;updateVisualizerControls();saveLibrary();if(fullscreenMode==='visualizer')drawVisualizer()}
 function updateFullscreenArtistBackdrop(track=currentTrack){const backdrop=$('#fullscreenArtistBackdrop'),image=track?artistProfile(track.artist).image:'';backdrop.style.backgroundImage=image?`url("${String(image).replace(/["\\]/g,'\\$&')}")`:'';backdrop.classList.toggle('has-image',Boolean(image))}
 function openFullscreen(){const fp=$('#fullscreenPlayer');updateFullscreenArtistBackdrop();fp.classList.add('open');fp.setAttribute('aria-hidden','false');document.body.requestFullscreen?.().catch(()=>{});resizeCanvas();setFullscreenMode(fullscreenMode)}
 function closeFullscreen(){const fp=$('#fullscreenPlayer');videoLookupToken++;$('#onlineVideoHost').innerHTML='';fp.classList.remove('open');fp.setAttribute('aria-hidden','true');if(document.fullscreenElement)document.exitFullscreen?.()}
 let visualFrame=null;
 function resizeCanvas(){const c=$('#visualizer');const dpr=Math.min(devicePixelRatio,2);c.width=innerWidth*dpr;c.height=innerHeight*dpr;c.getContext('2d').setTransform(dpr,0,0,dpr,0,0)}
-function drawVisualizer(){cancelAnimationFrame(visualFrame);const canvas=$('#visualizer'),ctx=canvas.getContext('2d');let phase=0;const loop=()=>{if(!$('#fullscreenPlayer').classList.contains('open'))return;phase+=isPlaying?.018:.006;const w=innerWidth,h=innerHeight;ctx.globalCompositeOperation='destination-out';ctx.fillStyle='rgba(0,0,0,.2)';ctx.fillRect(0,0,w,h);ctx.globalCompositeOperation='source-over';const accent=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();for(let band=0;band<4;band++){ctx.beginPath();for(let x=0;x<=w;x+=8){const amp=(35+band*17)*(isPlaying?1:.35);const y=h*.47+Math.sin(x*.008+phase*(2+band*.25)+band)*amp+Math.sin(x*.019-phase)*20;if(x===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)}ctx.strokeStyle=band===0?accent:`rgba(210,130,100,${.36-band*.07})`;ctx.lineWidth=2-band*.25;ctx.shadowColor=accent;ctx.shadowBlur=band===0?20:6;ctx.stroke()}ctx.shadowBlur=0;visualFrame=requestAnimationFrame(loop)};loop()}
+function drawVisualizer(){
+  cancelAnimationFrame(visualFrame);const canvas=$('#visualizer'),ctx=canvas.getContext('2d');let phase=0;
+  const loop=()=>{if(!$('#fullscreenPlayer').classList.contains('open')||fullscreenMode!=='visualizer')return;phase+=isPlaying?.018:.006;const w=innerWidth,h=innerHeight,energy=isPlaying?1:.34,accent=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();ctx.globalCompositeOperation='destination-out';ctx.fillStyle=visualizerStyle==='spectrum'?'rgba(0,0,0,.3)':'rgba(0,0,0,.18)';ctx.fillRect(0,0,w,h);ctx.globalCompositeOperation='source-over';
+    if(visualizerStyle==='waves'){
+      for(let band=0;band<4;band++){ctx.beginPath();for(let x=0;x<=w;x+=8){const amp=(35+band*17)*energy,y=h*.47+Math.sin(x*.008+phase*(2+band*.25)+band)*amp+Math.sin(x*.019-phase)*20;if(x===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)}ctx.strokeStyle=band===0?accent:`rgba(210,130,100,${.36-band*.07})`;ctx.lineWidth=2-band*.25;ctx.shadowColor=accent;ctx.shadowBlur=band===0?20:6;ctx.stroke()}
+    }else if(visualizerStyle==='orbit'){
+      const centerX=w*.5,centerY=h*.43,base=Math.min(w,h)*.16;ctx.save();ctx.translate(centerX,centerY);for(let ring=0;ring<5;ring++){const radius=base+ring*32;ctx.beginPath();for(let step=0;step<=180;step++){const angle=step/180*Math.PI*2,wobble=(10+ring*2)*energy*Math.sin(angle*(3+ring)+phase*(4-ring*.35)),r=radius+wobble,x=Math.cos(angle)*r,y=Math.sin(angle)*r;if(step===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)}ctx.strokeStyle=ring===0?accent:`rgba(${170+ring*13},${95+ring*18},${205-ring*8},${.58-ring*.075})`;ctx.lineWidth=Math.max(1,3-ring*.35);ctx.shadowColor=accent;ctx.shadowBlur=ring===0?25:9;ctx.stroke();const orbitAngle=phase*(2.4-ring*.22)+ring*1.25,orbRadius=radius+Math.sin(phase*2+ring)*12;ctx.beginPath();ctx.arc(Math.cos(orbitAngle)*orbRadius,Math.sin(orbitAngle)*orbRadius,Math.max(2,7-ring),0,Math.PI*2);ctx.fillStyle=ring%2?accent:'#f8d69a';ctx.fill()}ctx.restore();
+    }else{
+      const bars=Math.max(48,Math.floor(w/20)),gap=4,barWidth=Math.max(4,(w*.84-(bars-1)*gap)/bars),start=w*.08,baseline=h*.66,gradient=ctx.createLinearGradient(0,baseline,0,h*.22);gradient.addColorStop(0,accent);gradient.addColorStop(.55,'#b45bdb');gradient.addColorStop(1,'#78e8dc');ctx.fillStyle=gradient;ctx.shadowColor=accent;ctx.shadowBlur=14;for(let bar=0;bar<bars;bar++){const normalized=bar/(bars-1),envelope=.32+.68*Math.sin(Math.PI*normalized),motion=(Math.sin(bar*.55+phase*5)+Math.sin(bar*.19-phase*3)+2)/4,height=(18+motion*h*.29*envelope)*energy;ctx.globalAlpha=.48+motion*.52;ctx.fillRect(start+bar*(barWidth+gap),baseline-height,barWidth,height);ctx.fillRect(start+bar*(barWidth+gap),baseline+5,barWidth,height*.16)}ctx.globalAlpha=1;
+    }
+    ctx.shadowBlur=0;visualFrame=requestAnimationFrame(loop)
+  };loop();
+}
 
 // Global interactions
 $('#primaryNav').addEventListener('click',e=>{const btn=e.target.closest('[data-view]');if(btn)navigate(btn.dataset.view)});
@@ -1471,6 +1495,7 @@ $('#shuffleBtn').onclick=()=>{setShuffleEnabled(!shuffleEnabled);toast(shuffleEn
 $('#searchInput').oninput=e=>{if(currentView==='home'&&e.target.value.trim()){navigate('songs');renderSongs(e.target.value)}else if(currentView==='albums')renderAlbums(e.target.value);else if(currentView==='artists')renderArtists(e.target.value);else if(currentView==='songs')renderSongs(e.target.value)};
 $('#searchInput').addEventListener('keydown',e=>{if(e.key==='Escape'){e.target.value='';render()}});
 $$('.full-mode button').forEach(btn=>btn.onclick=()=>setFullscreenMode(btn.dataset.mode));
+$$('[data-visualizer]').forEach(btn=>btn.onclick=()=>setVisualizerStyle(btn.dataset.visualizer));
 window.addEventListener('resize',()=>{hideContextMenu();if($('#fullscreenPlayer').classList.contains('open'))resizeCanvas()});
 $('.content').addEventListener('scroll',hideContextMenu,{passive:true});
 document.addEventListener('keydown',e=>{

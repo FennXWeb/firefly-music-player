@@ -3,7 +3,7 @@
   "branch": "beta",
   "version": "0.1.23",
   "publishedAt": "2026-08-04T03:44:19.5633741Z",
-  "notes": "Added playback-safe dynamic library refreshing, a right-click menu for the now-playing strip, Play Next actions for tracks and albums, durable ZIP music importing, album-art-reactive full-page album styling, draggable non-maximized window chrome, and improved Shelf Mode artwork selection. Shelf spines now prioritize real scans and imported full case art before dynamic or automatically textured text spines.",
+  "notes": "Added seamless background update downloads with silent restart-and-apply, animated artist GIF uploads and internet discovery, two new fullscreen visualizers (Pulse Orbit and Prism Spectrum), and persistent visualizer selection. Removed the sidebar storage meter for a cleaner toolbar.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.23/Firefly-0.1.23-Setup.exe",
   "sha256": "A085447D9D97DD0247400ADD444FB0F93B01127858B287800EA6D51E9AE502CF"
 }
