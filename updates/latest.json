@@ -3,7 +3,7 @@
   "branch": "beta",
   "version": "0.1.26",
   "publishedAt": "2026-08-04T04:43:53.3514885Z",
-  "notes": "Greatly improved existing music-video discovery with direct multi-query YouTube search, metadata normalization, official artist and VEVO ranking, duration-aware matching, strict filtering for covers, reactions, lyric videos, audio-only uploads, remixes, and live performances, plus a Try Another Result fallback. Earlier negative and pending-AI searches are automatically retried with the new finder.",
+  "notes": "Introduces Firefly's new signature app icon: a luminous firefly and playback emblem designed for the Windows taskbar and Start menu. The old three-bar mark and LOCAL badge are removed, while the upper-left brand now features a layered wing-flutter, hover response, and softly pulsing glow with reduced-motion support.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.26/Firefly-0.1.26-Setup.exe",
   "sha256": "8CE7D321A4B1B56BEC85A639578B22F929EDFB4B7CF963A12A12BCD78D4563A4"
 }

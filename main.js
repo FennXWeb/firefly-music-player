@@ -610,6 +610,7 @@ function createWindow() {
     height: 940,
     minWidth: 980,
     minHeight: 680,
+    icon: path.join(__dirname, 'assets', 'firefly.ico'),
     backgroundColor: '#090909',
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#09090900', symbolColor: '#8f8b86', height: 42 },
