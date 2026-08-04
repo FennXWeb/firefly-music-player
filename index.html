@@ -10,6 +10,7 @@
 <body>
   <svg class="sprite" aria-hidden="true">
     <symbol id="i-albums" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 4v16M11 8h6M11 12h6M11 16h4"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10M9 20v-6h6v6"/></symbol>
     <symbol id="i-artist" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/></symbol>
     <symbol id="i-song" viewBox="0 0 24 24"><path d="M9 18V5l11-2v13M9 9l11-2"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></symbol>
     <symbol id="i-playlist" viewBox="0 0 24 24"><path d="M4 6h10M4 11h10M4 16h6M18 14v-3m0 3v3m0-3h-3m3 0h3"/></symbol>
@@ -39,11 +40,12 @@
   <div class="ambient"><i></i><i></i><i></i></div>
   <div class="app-shell">
     <aside class="sidebar">
-      <div class="brand"><span class="brand-mark"><i></i><i></i><i></i></span><span>firefly</span><b>LOCAL</b></div>
+      <button class="brand" id="brandHome" aria-label="Open Home"><span class="brand-mark"><i></i><i></i><i></i></span><span>firefly</span><b>LOCAL</b></button>
       <nav class="nav-primary" id="primaryNav">
+        <button class="active" data-view="home"><svg><use href="#i-home"/></svg><span>Home</span></button>
         <button data-view="playlists"><svg><use href="#i-playlist"/></svg><span>Playlists</span></button>
         <button data-view="artists"><svg><use href="#i-artist"/></svg><span>Artists</span></button>
-        <button class="active" data-view="albums"><svg><use href="#i-albums"/></svg><span>Albums</span><em id="albumCount">8</em></button>
+        <button data-view="albums"><svg><use href="#i-albums"/></svg><span>Albums</span><em id="albumCount">8</em></button>
         <button data-view="songs"><svg><use href="#i-song"/></svg><span>Songs</span><em id="songCount">42</em></button>
       </nav>
       <div class="sidebar-section">

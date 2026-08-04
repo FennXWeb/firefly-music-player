@@ -509,7 +509,7 @@ app.whenReady().then(() => {
     dataDirectory
   }));
   ipcMain.handle('state:save', async (_event, state) => {
-    await writeJsonAtomic(statePath, { ...state, schemaVersion: 2, savedAt: new Date().toISOString() });
+    await writeJsonAtomic(statePath, { ...state, schemaVersion: 3, savedAt: new Date().toISOString() });
     return true;
   });
   ipcMain.handle('credentials:load', async () => {
