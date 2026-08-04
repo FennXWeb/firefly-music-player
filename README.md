@@ -17,6 +17,7 @@ Firefly is a local-first, highly customizable music player concept for Windows. 
 - Metadata lookup flow with selectable artwork candidates.
 - Multi-source artist-image search across Wikimedia Commons, Deezer, and TheAudioDB, with offline local caching.
 - Album shelf mode with drag sorting and an animated, openable jewel case.
+- Source-aware shelf spine cropping for generated cases, full spreads, back-cover scans, and dedicated spine scans.
 - Fullscreen player with visualizer and generated-video queue states.
 - Nested master playlists, drag-to-group interactions, and smart playlists.
 - Persistent per-track play counts and last-played history, recorded once when each new playback genuinely starts.

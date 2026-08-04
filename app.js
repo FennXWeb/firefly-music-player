@@ -660,16 +660,25 @@ function connectSunoModal() {
   if($('#disconnectSuno'))$('#disconnectSuno').onclick=async()=>{sunoConnected=false;credentials.sunoToken='';await saveCredentials().catch(()=>{});saveLibrary();closeModal();if(currentView==='suno')renderSuno();else renderSettings();toast('ApiPass disconnected')};
 }
 
+function spineArtworkStyle(image,mode='separate'){
+  const crop={
+    dynamic:{size:'1200% 100%',position:'right center'},
+    'back-scan':{size:'2200% 100%',position:'right center'},
+    'full-spread':{size:'2200% 100%',position:'center center'},
+    separate:{size:'100% 100%',position:'center center'}
+  }[mode]||{size:'100% 100%',position:'center center'};
+  return `background-image:url('${image}');background-size:${crop.size};background-position:${crop.position};background-repeat:no-repeat;`;
+}
 function shelfAlbumMarkup(album,shelfId){
   const dynamic=dynamicCaseReady(album)?album.dynamicCaseArt:null;
   const scannedSpine=album.fullArtParts?.spine;
   const manualSpine=!album.fullArtParts&&album.customFullArt;
   const hasSpine=Boolean(dynamic||scannedSpine||manualSpine);
   const spineStyle=dynamic
-    ? `background-image:url('${dynamic.backgroundUrl}');background-size:auto 100%;background-position:right center;font-family:'${dynamicFontName(dynamic.font)}';`
+    ? `${spineArtworkStyle(dynamic.backgroundUrl,'dynamic')}font-family:'${dynamicFontName(dynamic.font)}';`
     : scannedSpine
-    ? `background-image:url('${scannedSpine}');background-size:${album.fullArtParts.spineMode==='back-scan'?'auto 100%':'cover'};background-position:${album.fullArtParts.spineMode==='back-scan'?'right center':'center'};`
-    : (manualSpine?`background-image:url('${album.customFullArt}');background-size:auto 100%;background-position:center;`:'');
+    ? spineArtworkStyle(scannedSpine,album.fullArtParts.spineMode||'separate')
+    : (manualSpine?spineArtworkStyle(album.customFullArt,'full-spread'):'');
   return `<div draggable="true" class="shelf-album ${dynamic?'dynamic-shelf-spine':hasSpine?'has-real-spine':'auto-spine'}" data-shelf-album="${album.id}" data-parent-shelf="${shelfId}" style="${spineStyle}">${dynamic||!hasSpine?`${esc(album.artist)} - ${esc(album.title)}`:''}</div>`;
 }
 
@@ -798,7 +807,7 @@ async function caseArtLookup(a){
     openModal(`<div class="modal-head"><h2>No case scans found</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><div class="empty-state" style="padding:42px 20px">${icon('image')}<h2>No back-cover scans are available</h2><p>Try another album or release title. Firefly only shows editions with a genuine back-cover scan in full case-art results.</p></div></div><div class="modal-actions"><button class="ghost close-modal">Close</button><button class="primary" id="retryCaseArt">Retry search</button></div>`,true);$('#retryCaseArt').onclick=()=>caseArtLookup(a);return;
   }
   const realSpineCount=cases.filter(item=>item.spine).length;
-  openModal(`<div class="modal-head"><h2>Choose full case artwork</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><div class="lookup-status">${icon('spark')}<span>${cases.length} release${cases.length===1?'':'s'} with real back art found · ${realSpineCount} with scanned spine art. Editions with spines are listed first.</span></div><div class="case-art-grid">${cases.map((item,index)=>{const spineStyle=item.spine?`background-image:url('${item.spine}');background-size:${item.spineMode==='back-scan'?'auto 100%':'cover'};background-position:${item.spineMode==='back-scan'?'right center':'center'};`:'';return `<button class="case-art-choice" data-case-index="${index}"><div class="case-art-preview"><span style="background-image:url('${item.back}')"></span><i class="${item.spine?'scanned-spine':'auto-spine-preview'}" style="${spineStyle}">${item.spine?'':'AUTO'}</i><span style="background-image:url('${item.front||item.back}')"></span></div><b>${esc(item.title)}</b><small>${esc([item.country,item.date].filter(Boolean).join(' · ')||'Scanned release')} · Back ✓ · ${item.spine?'Spine scan ✓':'Auto spine'}</small></button>`}).join('')}</div></div><div class="modal-actions"><button class="ghost close-modal">Cancel</button></div>`);
+  openModal(`<div class="modal-head"><h2>Choose full case artwork</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><div class="lookup-status">${icon('spark')}<span>${cases.length} release${cases.length===1?'':'s'} with real back art found · ${realSpineCount} with scanned spine art. Editions with spines are listed first.</span></div><div class="case-art-grid">${cases.map((item,index)=>{const spineStyle=item.spine?spineArtworkStyle(item.spine,item.spineMode||'separate'):'';return `<button class="case-art-choice" data-case-index="${index}"><div class="case-art-preview"><span style="background-image:url('${item.back}')"></span><i class="${item.spine?'scanned-spine':'auto-spine-preview'}" style="${spineStyle}">${item.spine?'':'AUTO'}</i><span style="background-image:url('${item.front||item.back}')"></span></div><b>${esc(item.title)}</b><small>${esc([item.country,item.date].filter(Boolean).join(' · ')||'Scanned release')} · Back ✓ · ${item.spine?'Spine scan ✓':'Auto spine'}</small></button>`}).join('')}</div></div><div class="modal-actions"><button class="ghost close-modal">Cancel</button></div>`);
   $$('[data-case-index]',modalLayer).forEach(btn=>btn.onclick=()=>{const item=cases[Number(btn.dataset.caseIndex)];a.fullArtParts={front:item.front,back:item.back,spine:item.spine,spineMode:item.spineMode,sourceReleaseId:item.id};a.customFullArt=item.back;if(!a.customCover&&item.front){a.customCover=item.front;a.cover=''}saveLibrary();closeModal();render();toast('Full case artwork applied',item.spine?'Real back and spine scans added.':'Real back cover added; no spine scan exists for this edition, so the text spine will be used.')});
 }
 
