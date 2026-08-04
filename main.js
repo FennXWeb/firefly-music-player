@@ -90,7 +90,7 @@ async function downloadUpdate(webContents,channel='stable') {
   const response=await net.fetch(update.downloadUrl,{headers:{'User-Agent':`Firefly/${app.getVersion()}`}});
   if(!response.ok||!response.body)throw new Error(`Update download returned ${response.status}.`);
   await fs.mkdir(updatesDirectory,{recursive:true});
-  const finalPath=path.join(updatesDirectory,`Firefly-${safeFileStem(update.version)}-Windows.exe`),temporaryPath=`${finalPath}.download`;
+  const finalPath=path.join(updatesDirectory,`Firefly-${safeFileStem(update.version)}-Setup.exe`),temporaryPath=`${finalPath}.download`;
   const handle=await fs.open(temporaryPath,'w'),reader=response.body.getReader(),hash=crypto.createHash('sha256'),total=Number(response.headers.get('content-length'))||0;let received=0;
   try{while(true){const{done,value}=await reader.read();if(done)break;const chunk=Buffer.from(value);await handle.write(chunk);hash.update(chunk);received+=chunk.length;webContents.send('update:progress',{received,total,percent:total?Math.round(received/total*100):null})}}catch(error){await handle.close();await fs.rm(temporaryPath,{force:true});throw error}
   await handle.close();

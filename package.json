@@ -1,6 +1,6 @@
 {
   "name": "firefly-music",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "private": true,
   "description": "A highly customizable, local-first music player for Windows.",
   "author": "Firefly",
@@ -9,7 +9,9 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
-    "dist:win": "electron-builder --win portable"
+    "dist:win": "electron-builder --win nsis portable",
+    "dist:installer": "electron-builder --win nsis",
+    "dist:portable": "electron-builder --win portable"
   },
   "devDependencies": {
     "electron": "^37.2.0",
@@ -35,11 +37,25 @@
     "win": {
       "icon": "assets/firefly.ico",
       "target": [
+        "nsis",
         "portable"
       ]
     },
+    "nsis": {
+      "artifactName": "Firefly-${version}-Setup.exe",
+      "oneClick": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Firefly",
+      "uninstallDisplayName": "Firefly ${version}",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true
+    },
     "portable": {
-      "artifactName": "Firefly-${version}-Windows.exe",
+      "artifactName": "Firefly-${version}-Portable.exe",
       "requestExecutionLevel": "user"
     }
   },

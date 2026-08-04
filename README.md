@@ -4,7 +4,8 @@ Firefly is a local-first, highly customizable music player concept for Windows. 
 
 ## Run
 
-- Standalone executable: open the latest `release/Firefly-*-Windows.exe` after running `npm run dist:win`.
+- Windows installer: run the latest `release/Firefly-*-Setup.exe` after `npm run dist:installer` (or `npm run dist:win`).
+- Portable executable: open the latest `release/Firefly-*-Portable.exe` after `npm run dist:portable` (or `npm run dist:win`).
 - Instant Windows preview: right-click `start-firefly.ps1` and choose **Run with PowerShell**.
 - Electron: run `npm install`, then `npm start`.
 - Browser: open `index.html`.
@@ -35,6 +36,6 @@ Firefly checks for updates on startup and every 30 minutes while running. The ch
 - **Stable** reads `updates/latest.json` from the `main` branch.
 - **Test** reads `updates/latest.json` from the `beta` branch.
 
-Update downloads are accepted only from GitHub release hosts. If a manifest includes a SHA-256 checksum, Firefly verifies the complete download before offering to launch it. Portable builds keep using the same persistent data directory after an update.
+Update downloads are accepted only from GitHub release hosts. If a manifest includes a SHA-256 checksum, Firefly verifies the complete download before offering to launch it. The updater downloads the guided installer; portable builds remain available separately. Both editions keep using the same persistent data directory after an update, and uninstalling Firefly leaves that library data in place.
 
 All routine builds and GitHub prereleases are published from `beta`. The automated workflow cannot publish a stable release. Updating or releasing from `main` requires explicit owner approval.
