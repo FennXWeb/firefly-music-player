@@ -3,7 +3,7 @@
   "branch": "beta",
   "version": "0.1.19",
   "publishedAt": "2026-08-04T02:28:50.6324992Z",
-  "notes": "Fixed Shelf Mode spine artwork cropping. Dynamic Case Art now uses the exact generated spine strip, full spreads and back-cover scans use source-aware edge crops, and dedicated spine scans display without losing their top or bottom edges.",
+  "notes": "Added six Songs sorting modes, fixed Shuffle and Repeat queue behavior, made the volume icon a responsive mute control, added a default Dynamic Case Art preference for new albums, increased UI readability, and added cached plain or time-synchronized lyrics with a third fullscreen Lyrics mode.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.19/Firefly-0.1.19-Setup.exe",
   "sha256": "B29525BCE17C2F98E324BF03900597E40A7C21CA8C072948F7D643EA3D848C76"
 }

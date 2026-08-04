@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('firefly', {
   generateDynamicCaseArt: options => ipcRenderer.invoke('dynamic-case:generate', options),
   searchArtistImages: artist => ipcRenderer.invoke('artist:image-search', artist),
   cacheArtistImage: options => ipcRenderer.invoke('artist:image-cache', options),
+  lookupLyrics: options => ipcRenderer.invoke('lyrics:lookup', options),
   testSunoConnection: () => ipcRenderer.invoke('suno:test'),
   createSunoTask: options => ipcRenderer.invoke('suno:create', options),
   querySunoTask: taskId => ipcRenderer.invoke('suno:query', taskId),

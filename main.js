@@ -358,6 +358,51 @@ async function importSunoTrack(options = {}) {
   }
   return { audioUrl, audioPath, imageUrl, importedAt: new Date().toISOString() };
 }
+async function lookupLyrics(options = {}) {
+  const title = String(options.title || '').trim();
+  const artist = String(options.artist || '').trim();
+  const album = String(options.album || '').trim();
+  const duration = Math.max(0, Math.round(Number(options.duration) || 0));
+  if (!title || !artist) throw new Error('A song title and artist are required to find lyrics.');
+  const headers = { Accept: 'application/json', 'User-Agent': 'Firefly Music Player/0.1.20 (https://github.com/FennXWeb/firefly-music-player)' };
+  const exact = new URL('https://lrclib.net/api/get');
+  exact.searchParams.set('track_name', title);
+  exact.searchParams.set('artist_name', artist);
+  if (album) exact.searchParams.set('album_name', album);
+  if (duration) exact.searchParams.set('duration', String(duration));
+  let record = null;
+  try {
+    const response = await net.fetch(exact.href, { headers, signal: AbortSignal.timeout(12000) });
+    if (response.ok) record = await response.json();
+    else if (response.status !== 404) throw new Error(`Lyrics service returned ${response.status}.`);
+  } catch (error) {
+    if (!/404/.test(error?.message || '')) console.warn('Exact lyrics lookup failed', error);
+  }
+  if (!record?.plainLyrics && !record?.syncedLyrics) {
+    const search = new URL('https://lrclib.net/api/search');
+    search.searchParams.set('track_name', title);
+    search.searchParams.set('artist_name', artist);
+    if (album) search.searchParams.set('album_name', album);
+    const response = await net.fetch(search.href, { headers, signal: AbortSignal.timeout(12000) });
+    if (!response.ok) throw new Error(`Lyrics search returned ${response.status}.`);
+    const records = await response.json();
+    const normalized = value => String(value || '').normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const targetTitle = normalized(title), targetArtist = normalized(artist), targetAlbum = normalized(album);
+    record = (Array.isArray(records) ? records : []).sort((left, right) => {
+      const score = item => Number(normalized(item.trackName) === targetTitle) * 100 + Number(normalized(item.artistName) === targetArtist) * 80 + Number(targetAlbum && normalized(item.albumName) === targetAlbum) * 30 + Number(Boolean(item.syncedLyrics)) * 12 - (duration && item.duration ? Math.min(25, Math.abs(Number(item.duration) - duration)) : 0);
+      return score(right) - score(left);
+    })[0] || null;
+  }
+  if (!record?.plainLyrics && !record?.syncedLyrics) return null;
+  return {
+    plain: String(record.plainLyrics || '').trim(),
+    synced: String(record.syncedLyrics || '').trim(),
+    instrumental: Boolean(record.instrumental),
+    source: 'LRCLIB',
+    sourceId: record.id || null,
+    fetchedAt: Date.now()
+  };
+}
 function encryptSecret(value = '') {
   if (!value) return '';
   return safeStorage.isEncryptionAvailable()
@@ -386,6 +431,7 @@ async function entryFor(filePath, root = '') {
       const { parseFile } = await metadataModule;
       const parsed = await parseFile(filePath, { duration: true, skipPostHeaders: true });
       const common = parsed.common || {}, picture = common.picture?.[0];
+      const embeddedLyrics = common.lyrics?.find(item => item?.syncText?.length) || common.lyrics?.find(item => item?.text) || null;
       entry.metadata = {
         title: common.title || '',
         artist: common.artist || common.albumartist || '',
@@ -396,7 +442,13 @@ async function entryFor(filePath, root = '') {
         track: common.track?.no || null,
         disc: common.disk?.no || null,
         duration: parsed.format?.duration || null,
-        artwork: picture ? `data:${picture.format};base64,${Buffer.from(picture.data).toString('base64')}` : null
+        artwork: picture ? `data:${picture.format};base64,${Buffer.from(picture.data).toString('base64')}` : null,
+        lyrics: embeddedLyrics ? {
+          plain: String(embeddedLyrics.text || embeddedLyrics.syncText?.map(line => line.text).join('\n') || '').trim(),
+          syncedLines: (embeddedLyrics.syncText || []).filter(line => Number.isFinite(Number(line.timestamp))).map(line => ({ time: Number(line.timestamp) / 1000, text: String(line.text || '') })),
+          source: 'Embedded metadata',
+          fetchedAt: Date.now()
+        } : null
       };
     } catch { entry.metadata = null; }
   }
@@ -496,6 +548,7 @@ app.whenReady().then(() => {
   ipcMain.handle('dynamic-case:generate', async (_event, options) => generateDynamicCaseArt(options));
   ipcMain.handle('artist:image-search', async (_event, artist) => searchSupplementalArtistImages(artist));
   ipcMain.handle('artist:image-cache', async (_event, options) => cacheArtistImage(options));
+  ipcMain.handle('lyrics:lookup', async (_event, options) => lookupLyrics(options));
   ipcMain.handle('suno:test', async () => testSunoConnection());
   ipcMain.handle('suno:create', async (_event, options) => createSunoTask(options));
   ipcMain.handle('suno:query', async (_event, taskId) => querySunoTask(taskId));
