@@ -1,9 +1,9 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.16",
-  "publishedAt": "2026-08-04T01:38:41.2991680Z",
+  "version": "0.1.17",
+  "publishedAt": "2026-08-04T01:57:30.3709534Z",
   "notes": "Fixed persistent play counters and last-played tracking. Each new playback counts once after audio genuinely starts, pause/resume does not inflate totals, failed playback is ignored, and Smart Playlists now use correct history timestamps.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.16/Firefly-0.1.16-Windows.exe",
-  "sha256": "5FE00AFF3FCF7E57135660B137EB17E1E49076383E53D715BE46C034720F2F69"
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.17/Firefly-0.1.17-Windows.exe",
+  "sha256": "8302453001EE823E57ABA3BE508D294FF1978B923C5B5917E268E03EF0534535"
 }
