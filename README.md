@@ -34,3 +34,5 @@ Firefly checks for updates on startup and every 30 minutes while running. The ch
 - **Test** reads `updates/latest.json` from the `beta` branch.
 
 Update downloads are accepted only from GitHub release hosts. If a manifest includes a SHA-256 checksum, Firefly verifies the complete download before offering to launch it. Portable builds keep using the same persistent data directory after an update.
+
+All routine builds and GitHub prereleases are published from `beta`. The automated workflow cannot publish a stable release. Updating or releasing from `main` requires explicit owner approval.
