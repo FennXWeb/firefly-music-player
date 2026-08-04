@@ -1,9 +1,9 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.21",
-  "publishedAt": "2026-08-04T03:10:32.0608445Z",
+  "version": "0.1.22",
+  "publishedAt": "2026-08-04T03:27:28.5074314Z",
   "notes": "Added Playlist Cover Studio with seven background styles, custom image uploads, curated color palettes, five font treatments, four text layouts, custom title and subtitle text, and five animated overlays. Covers now appear consistently in the playlist library, sidebar, and playlist detail pages, and new playlists can launch directly into the creator.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.21/Firefly-0.1.21-Setup.exe",
-  "sha256": "719226731E62F20B638C1A8D83E918DF186F2DD7F795BF325501ABA3A8CE901E"
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.22/Firefly-0.1.22-Setup.exe",
+  "sha256": "E30D27C9B4D19032C2E6E2F8A4E06FC77E0125C6DED8E083E55C6251A83F93F5"
 }
