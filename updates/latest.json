@@ -1,9 +1,9 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.24",
-  "publishedAt": "2026-08-04T04:07:11.9345607Z",
+  "version": "0.1.25",
+  "publishedAt": "2026-08-04T04:28:55.8026046Z",
   "notes": "Added persistent Live Folders to the Import Music menu. Firefly now watches selected folders for new, changed, moved, and deleted music, performs periodic recovery scans, imports metadata and artwork, keeps user customizations intact, and safely retains tracks while a folder or external drive is offline.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.24/Firefly-0.1.24-Setup.exe",
-  "sha256": "4B005AE40D70D336A03E32D8CFA22946DD97EA48B8DDEDD2AFA62532404D9EA8"
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.25/Firefly-0.1.25-Setup.exe",
+  "sha256": "9C2CC00F5F9036ECEDE806BB98F8A83C4D6598D12203BD7883F561FBEAF5D410"
 }
