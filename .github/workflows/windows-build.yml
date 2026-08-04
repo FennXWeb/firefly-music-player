@@ -1,31 +1,67 @@
-name: Windows build
+name: Beta Windows build
 
 on:
   workflow_dispatch:
   push:
-    tags:
-      - "v*"
+    branches:
+      - beta
+    paths-ignore:
+      - updates/latest.json
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  beta-release:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: beta
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run dist:win
+      - name: Read build metadata
+        id: build
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $asset = "Firefly-$version-Windows.exe"
+          $hash = (Get-FileHash "release/$asset" -Algorithm SHA256).Hash
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "asset=$asset" >> $env:GITHUB_OUTPUT
+          "sha256=$hash" >> $env:GITHUB_OUTPUT
       - uses: actions/upload-artifact@v4
         with:
-          name: Firefly-Windows
-          path: release/Firefly-*-Windows.exe
+          name: Firefly-Windows-Beta
+          path: release/${{ steps.build.outputs.asset }}
       - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          files: release/Firefly-*-Windows.exe
+          tag_name: beta-v${{ steps.build.outputs.version }}
+          target_commitish: beta
+          name: Firefly ${{ steps.build.outputs.version }} Beta
+          prerelease: true
+          make_latest: false
+          files: release/${{ steps.build.outputs.asset }}
+      - name: Publish beta updater manifest
+        shell: pwsh
+        run: |
+          $manifest = Get-Content updates/latest.json | ConvertFrom-Json
+          $manifest.channel = "beta"
+          $manifest.branch = "beta"
+          $manifest.version = "${{ steps.build.outputs.version }}"
+          $manifest.publishedAt = (Get-Date).ToUniversalTime().ToString("o")
+          $manifest.downloadUrl = "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v${{ steps.build.outputs.version }}/${{ steps.build.outputs.asset }}"
+          $manifest.sha256 = "${{ steps.build.outputs.sha256 }}"
+          $manifest | ConvertTo-Json | Set-Content updates/latest.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add updates/latest.json
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "Publish beta updater manifest for ${{ steps.build.outputs.version }}"
+            git push origin beta
+          }
