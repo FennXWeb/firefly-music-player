@@ -1,9 +1,9 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.27",
-  "publishedAt": "2026-08-04T04:57:09.1382679Z",
+  "version": "0.1.28",
+  "publishedAt": "2026-08-04T22:02:33.2584009Z",
   "notes": "Repairs animated artist-image discovery with Wikimedia, GIPHY, and Tenor results; themes full artist pages from the selected portrait; adds drag ordering and seven persistent playlist sorts with playback that follows the visible order; activates Album Grid/List and all album filters; and rebuilds Settings into five functional tabs with extensive appearance, quality-of-life, library, privacy, queue, and audio controls.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.27/Firefly-0.1.27-Setup.exe",
-  "sha256": "2796FB92F9A08F6B522034818CA2375CE642C461688477FE2B6F2F65E18B0679"
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.28/Firefly-0.1.28-Setup.exe",
+  "sha256": "9DD58C8C14319BC7809223FFB06EEBF9FAA910E7A7F5B9B2F13BA8A373A652AB"
 }
