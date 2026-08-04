@@ -3,6 +3,11 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('firefly', {
   chooseMusicFiles: () => ipcRenderer.invoke('library:choose-files'),
   chooseMusicFolder: () => ipcRenderer.invoke('library:choose-folder'),
+  addLiveFolder: () => ipcRenderer.invoke('library:add-live-folder'),
+  syncLiveFolders: folders => ipcRenderer.invoke('library:sync-live-folders', folders),
+  rescanLiveFolder: folder => ipcRenderer.invoke('library:rescan-live-folder', folder),
+  removeLiveFolder: id => ipcRenderer.invoke('library:remove-live-folder', id),
+  onLiveFolderSnapshot: callback => { const listener = (_event, snapshot) => callback(snapshot); ipcRenderer.on('library:live-folder-snapshot', listener); return () => ipcRenderer.removeListener('library:live-folder-snapshot', listener); },
   chooseMusicZip: () => ipcRenderer.invoke('library:choose-zip'),
   loadState: () => ipcRenderer.invoke('state:load'),
   saveState: state => ipcRenderer.invoke('state:save', state),

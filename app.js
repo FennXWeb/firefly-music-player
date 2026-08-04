@@ -10,6 +10,7 @@ let artistProfiles = {};
 let sunoConnected = false;
 let sunoJobs = [];
 let playHistory = [];
+let liveFolders = [];
 let sunoTab = 'create';
 let sunoPolling = false;
 let sunoPollTimer = null;
@@ -153,7 +154,7 @@ function saveLibrary() {
   pruneEmptyAlbums();
   syncShelves();
   libraryRevision++;
-  const state = { albums, playlists:customPlaylists, shelves, artistProfiles, sunoConnected, sunoJobs, playHistory, settings };
+  const state = { albums, playlists:customPlaylists, shelves, artistProfiles, sunoConnected, sunoJobs, playHistory, liveFolders, settings };
   try { localStorage.setItem('firefly-library-v1', JSON.stringify(state)); }
   catch { toast('Library is too large to cache','Your current session is safe, but large uploaded artwork may not persist.'); }
   if (persistenceReady && window.firefly?.saveState) {
@@ -191,6 +192,7 @@ function applySavedState(saved = {}) {
   if (saved.artistProfiles && typeof saved.artistProfiles === 'object' && !Array.isArray(saved.artistProfiles)) artistProfiles = saved.artistProfiles;
   if (Array.isArray(saved.sunoJobs)) sunoJobs = saved.sunoJobs;
   if (Array.isArray(saved.playHistory)) playHistory = saved.playHistory.filter(event=>event&&typeof event.trackId==='string'&&Number.isFinite(Number(event.playedAt))).slice(-2500);
+  if (Array.isArray(saved.liveFolders)) liveFolders = saved.liveFolders.filter(folder=>folder&&typeof folder.id==='string'&&typeof folder.path==='string').map(folder=>({...folder,status:folder.status||'pending'}));
   sunoConnected = Boolean(saved.sunoConnected);
   settings = { ...defaultSettings, ...(saved.settings || {}) };
   settings.sunoEndpoint = defaultSettings.sunoEndpoint;
@@ -237,6 +239,7 @@ async function initializePersistence() {
   setRange($('#volume'), settings.volume);
   render();
   if (!durableState || migrateLegacy || removedEmptyAlbums) saveLibrary();
+  initializeLiveFolderSync();
   initializeUpdater();
   initializeSunoPolling();
 }
@@ -830,6 +833,7 @@ function renderSettings() {
     <div class="setting-row"><div><b>ApiPass · Suno</b><small>Generate with Suno V5.5 and import completed tracks into Firefly</small></div><button class="ghost" id="connectSuno">${sunoConnected?'Manage connection':'Connect ApiPass'}</button></div>
     <div class="setting-row"><div><b>Gapless playback</b><small>Remove silence between supported tracks</small></div><button class="switch ${settings.gapless?'on':''}" data-toggle="gapless"></button></div>
     <div class="setting-row"><div><b>Dynamic Case Art for new albums</b><small>Automatically extend newly imported cover art into a generated back and spine. Requires your OpenAI API key.</small></div><button class="switch ${settings.dynamicArtByDefault?'on':''}" data-toggle="dynamic-default" aria-label="Toggle Dynamic Case Art for new albums"></button></div>
+    <div class="setting-row"><div><b>Live folders</b><small>${liveFolders.length?`${liveFolders.length} watched folder${liveFolders.length===1?'':'s'} · ${liveFolders.reduce((sum,folder)=>sum+(Number(folder.trackCount)||0),0)} synced tracks`:'Continuously mirror music folders into your library'}</small></div><button class="ghost" id="manageLiveFolders">${liveFolders.length?'Manage':'Add folder'}</button></div>
     <div class="setting-row"><div><b>Audio crossfade</b><small>Blend the final seconds into the next track</small></div><input id="crossfadeSetting" type="range" value="${settings.crossfade}" style="width:170px;--range:${settings.crossfade}%"/></div>
     <div class="setting-row update-setting-row"><div><b>Update channel</b><small>Stable follows main; Test follows the beta branch</small></div><span class="update-setting-controls"><select id="updateChannel"><option value="stable" ${settings.updateChannel!=='beta'?'selected':''}>Stable · main</option><option value="beta" ${settings.updateChannel==='beta'?'selected':''}>Test · beta</option></select><button class="ghost" id="checkForUpdates">Check now</button></span></div>
     <div class="setting-row"><div><b>Update status</b><small>${updateState.status==='available'?`Version ${esc(updateState.version)} is available`:updateState.status==='error'?esc(updateState.error||'Update check failed'):updateState.status==='checking'?'Checking GitHub now…':updateState.status==='downloading'?'Downloading in the background…':updateState.status==='installing'?'Verifying and preparing…':updateState.status==='ready'?'Ready · restart to apply':'Firefly checks when it opens and every 30 minutes'}</small></div><button class="ghost" id="showUpdateDetails">Details</button></div>
@@ -843,6 +847,7 @@ function renderSettings() {
   $('#showUpdateDetails').onclick=openUpdateModal;
   $('#openaiKey').onchange=e=>{credentials.openaiKey=e.target.value.trim();saveCredentials();if(credentials.openaiKey)albums.filter(album=>album.dynamicCaseArt?.autoGenerate).forEach(queueDefaultDynamicCase);toast('OpenAI key saved','Stored with Windows encryption.')};
   if($('#openDataFolder'))$('#openDataFolder').onclick=()=>window.firefly?.openDataDirectory();
+  $('#manageLiveFolders').onclick=()=>liveFolders.length?openLiveFoldersModal():addLiveFolder();
   $('#connectSuno').onclick=connectSunoModal;
   $$('.settings-menu button',view).forEach(btn=>btn.onclick=()=>{$$('.settings-menu button',view).forEach(b=>b.classList.remove('active'));btn.classList.add('active');toast(`${btn.textContent} preferences selected`)});
 }
@@ -1129,6 +1134,73 @@ function displayDuration(seconds){if(!seconds)return'Local';const whole=Math.rou
 function mostCommon(values){const usable=values.filter(Boolean);if(!usable.length)return null;return usable.sort((a,b)=>usable.filter(x=>x===a).length-usable.filter(x=>x===b).length).at(-1)}
 function makeTrack(entry,album,index=0){const meta=entry.metadata||{};return{id:`local-${Date.now()}-${index}-${Math.random().toString(36).slice(2,7)}`,title:meta.title||cleanTrackTitle(entry.name),artist:meta.artist||album.artist,album:album.title,albumId:album.id,duration:displayDuration(meta.duration),durationSeconds:Number(meta.duration)||0,trackNumber:meta.track||index+1,discNumber:meta.disc||1,plays:0,lastPlayed:null,added:Date.now(),pending:false,url:entry.url||null,path:entry.path||null,lyrics:meta.lyrics||null}}
 
+function stableLiveKey(value=''){let hash=2166136261;for(const character of String(value)){hash^=character.charCodeAt(0);hash=Math.imul(hash,16777619)}return(hash>>>0).toString(36)}
+function liveFolderById(id){return liveFolders.find(folder=>folder.id===id)}
+function preferredFolderImage(entries,key){return entries.filter(entry=>entry.kind==='image'&&((entry.relativePath||'').split('/').slice(0,-1).join('/'))===key).sort((left,right)=>(/^(cover|folder|front)/i.test(left.name)?-1:1)-(/^(cover|folder|front)/i.test(right.name)?-1:1))[0]||null}
+function applyLiveFolderSnapshot(snapshot,{persist=true,notify=true}={}){
+  if(!snapshot?.folder?.id)return{added:0,removed:0,updated:0,offline:true};
+  let folder=liveFolderById(snapshot.folder.id),priorStatus=folder?.status,priorError=folder?.error;
+  if(!folder){folder={...snapshot.folder};liveFolders.push(folder)}else Object.assign(folder,snapshot.folder);
+  if(!snapshot.ok){folder.status='offline';folder.error=snapshot.error||'Folder unavailable';if(persist&&(priorStatus!=='offline'||priorError!==folder.error))saveLibrary();if(notify&&priorStatus!=='offline')toast('Live folder is offline',`${folder.name} will reconnect automatically.`);return{added:0,removed:0,updated:0,offline:true}}
+  folder.status='synced';folder.error='';folder.lastSyncedAt=snapshot.scannedAt||Date.now();
+  const entries=Array.isArray(snapshot.entries)?snapshot.entries:[],audioEntries=entries.filter(entry=>entry.kind==='audio'),activeIds=new Set(audioEntries.map(entry=>entry.liveTrackId));
+  const existingTracks=new Map(allTracks().map(track=>[track.id,track])),groups=new Map();
+  audioEntries.forEach(entry=>{const parts=(entry.relativePath||entry.name).split('/');parts.pop();const key=parts.join('/');if(!groups.has(key))groups.set(key,[]);groups.get(key).push(entry)});
+  let added=0,updated=0;
+  groups.forEach((sourceTracks,key)=>{
+    const taggedAlbum=mostCommon(sourceTracks.map(entry=>entry.metadata?.album));
+    const isLoose=sourceTracks.length===1&&!taggedAlbum,parts=key.split('/').filter(Boolean),sourceTitle=taggedAlbum||parts.at(-1)||folder.name||'Imported Album';
+    const sourceArtist=mostCommon(sourceTracks.map(entry=>entry.metadata?.albumArtist||entry.metadata?.artist))||'Imported Artist';
+    const albumId=isLoose?'loose-files':`live-album-${stableLiveKey(`${folder.id}\0${key}\0${sourceTitle}\0${sourceArtist}`)}`;
+    let album=albumById(albumId),createdAlbum=false;
+    if(!album){album=isLoose?ensureLooseAlbum():applyNewAlbumDefaults({id:albumId,title:sourceTitle,artist:sourceArtist,year:mostCommon(sourceTracks.map(entry=>entry.metadata?.year))||new Date().getFullYear(),genre:mostCommon(sourceTracks.map(entry=>entry.metadata?.genre))||'Imported',cover:'cover-8',customCover:null,fullArt:null,tracks:[]});if(!isLoose)albums.push(album);createdAlbum=true}
+    if(!isLoose){album.liveFolderId=folder.id;album.liveFolderKey=key;const image=preferredFolderImage(entries,key),embedded=sourceTracks.find(entry=>entry.metadata?.artwork)?.metadata.artwork,nextCover=image?.url||embedded||null;if(nextCover&&(!album.customCover||album.customCover===album.liveSourceCover)){if(album.customCover!==nextCover)updated++;album.customCover=nextCover;album.cover='';album.liveSourceCover=nextCover}else if(!nextCover&&album.customCover&&album.customCover===album.liveSourceCover){album.customCover=null;album.liveSourceCover=null;album.cover='cover-8';updated++}}
+    sourceTracks.forEach((entry,index)=>{
+      const meta=entry.metadata||{},sourceMetadata={title:meta.title||cleanTrackTitle(entry.name),artist:meta.artist||album.artist,album:meta.album||album.title,track:Number(meta.track)||index+1,disc:Number(meta.disc)||1};
+      let track=existingTracks.get(entry.liveTrackId);
+      if(!track){track=makeTrack(entry,album,index);track.id=entry.liveTrackId;track.liveFolderId=folder.id;track.liveManagedAlbumId=album.id;track.sourceModifiedAt=entry.modifiedAt||0;track.sourceSize=entry.size||0;track.liveSourceMetadata=sourceMetadata;album.tracks.push(track);existingTracks.set(track.id,track);added++}
+      else{
+        const prior=track.liveSourceMetadata||{},sourceChanged=track.sourceModifiedAt!==entry.modifiedAt||track.sourceSize!==entry.size;
+        if(sourceChanged){if(!prior.title||track.title===prior.title)track.title=sourceMetadata.title;if(!prior.artist||track.artist===prior.artist)track.artist=sourceMetadata.artist;track.duration=displayDuration(meta.duration);track.durationSeconds=Number(meta.duration)||0;track.trackNumber=sourceMetadata.track;track.discNumber=sourceMetadata.disc;if(meta.lyrics&&(!track.lyrics||track.lyrics?.source==='Embedded metadata'))track.lyrics=meta.lyrics;updated++}
+        const userMoved=track.liveManagedAlbumId&&track.albumId!==track.liveManagedAlbumId;
+        if(!userMoved&&track.albumId!==album.id){const oldAlbum=albumById(track.albumId);if(oldAlbum)oldAlbum.tracks=oldAlbum.tracks.filter(item=>item.id!==track.id);if(!album.tracks.includes(track))album.tracks.push(track)}
+        if(!userMoved){track.albumId=album.id;track.album=album.title;track.liveManagedAlbumId=album.id}
+        track.url=entry.url;track.path=entry.path;track.liveFolderId=folder.id;track.sourceModifiedAt=entry.modifiedAt||0;track.sourceSize=entry.size||0;track.liveSourceMetadata=sourceMetadata;
+      }
+    });
+    album.tracks.sort((left,right)=>(left.discNumber||1)-(right.discNumber||1)||(left.trackNumber||999)-(right.trackNumber||999));if(createdAlbum&&!isLoose)queueDefaultDynamicCase(album);
+  });
+  const staleIds=new Set(allTracks().filter(track=>track.liveFolderId===folder.id&&!activeIds.has(track.id)).map(track=>track.id));
+  if(staleIds.size){albums.forEach(album=>album.tracks=album.tracks.filter(track=>!staleIds.has(track.id)));playbackQueue=playbackQueue.filter(track=>!staleIds.has(track.id));playbackOriginalQueue=playbackOriginalQueue.filter(track=>!staleIds.has(track.id));staleIds.forEach(id=>selectedTrackIds.delete(id))}
+  folder.trackCount=audioEntries.length;folder.albumCount=[...groups.values()].filter(group=>group.length>1||mostCommon(group.map(entry=>entry.metadata?.album))).length;
+  if(persist&&(added||staleIds.size||updated||priorStatus!=='synced'))saveLibrary();
+  if(notify&&(added||staleIds.size||updated))toast('Live folder synced',`${folder.name} · ${added} added · ${staleIds.size} removed${updated?` · ${updated} refreshed`:''}`);
+  return{added,removed:staleIds.size,updated,offline:false};
+}
+async function initializeLiveFolderSync(){
+  if(!window.firefly?.syncLiveFolders)return;
+  window.firefly.onLiveFolderSnapshot?.(snapshot=>applyLiveFolderSnapshot(snapshot));
+  if(!liveFolders.length)return;
+  liveFolders.forEach(folder=>folder.status='scanning');
+  try{const snapshots=await window.firefly.syncLiveFolders(liveFolders);let changes=0,offline=0;snapshots.forEach(snapshot=>{const result=applyLiveFolderSnapshot(snapshot,{persist:false,notify:false});changes+=result.added+result.removed+result.updated;offline+=Number(result.offline)});saveLibrary();if(changes)toast('Live folders refreshed',`${changes} library change${changes===1?'':'s'} applied.`);if(offline)toast(`${offline} live folder${offline===1?' is':'s are'} offline`,'Firefly will keep checking in the background.')}
+  catch(error){toast('Could not start live folder sync',error?.message||'Firefly will retry next time it opens.')}
+}
+async function addLiveFolder(){
+  if(!window.firefly?.addLiveFolder){toast('Live folders are available in the Windows app');return}
+  try{const snapshot=await window.firefly.addLiveFolder();if(!snapshot)return;applyLiveFolderSnapshot(snapshot,{notify:false});toast(snapshot.ok?'Live folder connected':'Live folder saved',snapshot.ok?`${snapshot.folder.trackCount} tracks are now kept in sync.`:'Firefly will keep trying to reconnect.');openLiveFoldersModal()}
+  catch(error){toast('Could not add live folder',error?.message||'The selected folder could not be scanned.')}
+}
+async function rescanLiveFolder(id){const folder=liveFolderById(id);if(!folder||!window.firefly?.rescanLiveFolder)return;folder.status='scanning';openLiveFoldersModal();try{const snapshot=await window.firefly.rescanLiveFolder(folder);applyLiveFolderSnapshot(snapshot);openLiveFoldersModal()}catch(error){folder.status='offline';folder.error=error?.message||'Scan failed';saveLibrary();openLiveFoldersModal()}}
+function removeLiveFolder(id){
+  const folder=liveFolderById(id);if(!folder)return;const ids=new Set(allTracks().filter(track=>track.liveFolderId===id).map(track=>track.id));
+  confirmRemove('Remove live folder?',`${folder.name} and its ${ids.size} synced track${ids.size===1?'':'s'} will be removed from Firefly. Files on disk stay untouched.`,()=>{albums.forEach(album=>album.tracks=album.tracks.filter(track=>!ids.has(track.id)));customPlaylists.forEach(playlist=>removePlaylistTrackReferences(playlist,ids));playbackQueue=playbackQueue.filter(track=>!ids.has(track.id));playbackOriginalQueue=playbackOriginalQueue.filter(track=>!ids.has(track.id));liveFolders=liveFolders.filter(item=>item.id!==id);window.firefly?.removeLiveFolder?.(id);saveLibrary();render();toast('Live folder removed',folder.name)})
+}
+function openLiveFoldersModal(){
+  const rows=liveFolders.length?liveFolders.map(folder=>`<article class="live-folder-row ${esc(folder.status||'pending')}"><span class="live-folder-icon">${icon('albums')}<i></i></span><div><b>${esc(folder.name)}</b><small title="${esc(folder.path)}">${esc(folder.path)}</small><em>${folder.status==='synced'?`${folder.trackCount||0} tracks · synced ${folder.lastSyncedAt?new Date(folder.lastSyncedAt).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}):'now'}`:folder.status==='scanning'?'Scanning for changes…':folder.status==='offline'?'Offline · retrying automatically':'Waiting to sync'}</em></div><button class="ghost" data-live-rescan="${esc(folder.id)}">Scan now</button><button class="icon-button danger" data-live-remove="${esc(folder.id)}" title="Remove live folder">${icon('close')}</button></article>`).join(''):`<div class="empty-state compact">${icon('albums')}<h2>No live folders yet</h2><p>Add a music folder and Firefly will continuously mirror its supported audio files.</p></div>`;
+  openModal(`<div class="modal-head"><h2>Live folders</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><p class="modal-intro">Live folders stay outside Firefly and are watched for new, changed, moved, or deleted music. Disconnected folders remain in your library and reconnect automatically.</p><div class="live-folder-list">${rows}</div></div><div class="modal-actions"><button class="ghost close-modal">Done</button><button class="primary" id="addAnotherLiveFolder">${icon('plus')} Add live folder</button></div>`);
+  $('#addAnotherLiveFolder').onclick=addLiveFolder;$$('[data-live-rescan]',modalLayer).forEach(button=>button.onclick=()=>rescanLiveFolder(button.dataset.liveRescan));$$('[data-live-remove]',modalLayer).forEach(button=>button.onclick=()=>removeLiveFolder(button.dataset.liveRemove));
+}
+
 function normalizeBrowserFiles(files){return [...files].map(file=>({name:file.name,relativePath:file.webkitRelativePath||file.name,url:URL.createObjectURL(file),kind:file.type.startsWith('image/')?'image':'audio'}))}
 function importAudioEntries(entries,targetTrack=null){
   const audioEntries=entries.filter(e=>e.kind!=='image');if(!audioEntries.length){toast('No supported audio files found');return}
@@ -1186,7 +1258,7 @@ async function chooseZip(){
   if(!window.firefly?.chooseMusicZip){toast('ZIP import is available in the Windows app');return}
   try{const archive=await window.firefly.chooseMusicZip();if(archive)importFolderEntries(archive)}catch(error){toast('Could not import ZIP',error?.message||'The archive may be damaged or encrypted.')}
 }
-function showImportMenu(){const rect=$('#importTrigger').getBoundingClientRect();showContextMenu([{label:'Import music files',icon:'song',action:()=>chooseFiles()},{label:'Import a folder',icon:'albums',action:chooseFolder},{label:'Import a ZIP archive',icon:'upload',action:chooseZip}],rect.right-205,rect.bottom+7)}
+function showImportMenu(){const rect=$('#importTrigger').getBoundingClientRect();showContextMenu([{label:'Import music files',icon:'song',action:()=>chooseFiles()},{label:'Import a folder once',icon:'albums',action:chooseFolder},{label:'Add a live folder',icon:'spark',action:addLiveFolder},{label:'Import a ZIP archive',icon:'upload',action:chooseZip},...(liveFolders.length?[{separator:true},{label:'Manage live folders',icon:'settings',action:openLiveFoldersModal}]:[])],rect.right-215,rect.bottom+7)}
 
 function showTrackMenu(track){
   if(track.pending){openModal(`<div class="modal-head"><h2>Pending track</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><p style="color:#888">${esc(track.title)} by ${esc(track.artist)} is in the playlist but not in your library. Import the matching audio file to activate it and auto-tag its metadata.</p></div><div class="modal-actions"><button class="ghost close-modal">Cancel</button><button class="primary" id="importPending">${icon('upload')} Import audio</button></div>`,true);$('#importPending').onclick=()=>{closeModal();chooseFiles(track.id)};return}

@@ -1,6 +1,7 @@
 const { app, BrowserWindow, shell, dialog, ipcMain, safeStorage, session, net } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
+const fsNative = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { pathToFileURL, fileURLToPath } = require('url');
@@ -10,7 +11,9 @@ const AdmZip = require('adm-zip');
 // temporary extraction directory. This path is stable across Firefly upgrades.
 // Retain the original profile directory so the first durable-data build can
 // migrate the user's existing localStorage library in place.
-const persistentRoot = path.join(app.getPath('appData'), 'firefly-music');
+const persistentRoot = process.env.FIREFLY_DATA_ROOT
+  ? path.resolve(process.env.FIREFLY_DATA_ROOT)
+  : path.join(app.getPath('appData'), 'firefly-music');
 app.setPath('userData', persistentRoot);
 const dataDirectory = path.join(persistentRoot, 'Data');
 const statePath = path.join(dataDirectory, 'library.json');
@@ -26,6 +29,8 @@ const apiPassBaseUrl = 'https://api.apipass.dev';
 const updateRepository = 'FennXWeb/firefly-music-player';
 const updateBranches = { stable: 'main', beta: 'beta' };
 let preparedUpdate = null;
+const liveFolderWatchers = new Map();
+const liveEntryCache = new Map();
 
 const audioExtensions = new Set(['.mp3','.wav','.flac','.m4a','.aac','.ogg','.opus','.wma']);
 const imageExtensions = new Set(['.jpg','.jpeg','.png','.webp','.bmp']);
@@ -467,17 +472,75 @@ async function entryFor(filePath, root = '') {
   return entry;
 }
 
-async function scanFolder(root) {
+async function scanFolder(root, options = {}) {
   const results = [];
   async function walk(folder) {
     for (const item of await fs.readdir(folder, { withFileTypes: true })) {
       const fullPath = path.join(folder, item.name);
       if (item.isDirectory()) await walk(fullPath);
-      else if (audioExtensions.has(path.extname(item.name).toLowerCase()) || imageExtensions.has(path.extname(item.name).toLowerCase())) results.push(await entryFor(fullPath, root));
+      else if (audioExtensions.has(path.extname(item.name).toLowerCase()) || imageExtensions.has(path.extname(item.name).toLowerCase())) {
+        if (!options.live) { results.push(await entryFor(fullPath, root));continue; }
+        const stats=await fs.stat(fullPath),cacheKey=path.normalize(fullPath).toLowerCase(),cached=liveEntryCache.get(cacheKey);
+        let entry;
+        if(cached&&cached.modifiedAt===stats.mtimeMs&&cached.size===stats.size)entry={...cached.entry};
+        else{entry=await entryFor(fullPath,root);entry.modifiedAt=stats.mtimeMs;entry.size=stats.size;liveEntryCache.set(cacheKey,{modifiedAt:stats.mtimeMs,size:stats.size,entry})}
+        results.push(entry);
+      }
     }
   }
   await walk(root);
   return results;
+}
+
+function liveFolderId(root=''){return`live-${crypto.createHash('sha1').update(path.normalize(root).toLowerCase()).digest('hex').slice(0,16)}`}
+function normalizedLiveFolder(folder={}){
+  const root=path.resolve(String(folder.path||folder.root||''));
+  return{id:String(folder.id||liveFolderId(root)),path:root,name:String(folder.name||path.basename(root)||'Live folder'),addedAt:Number(folder.addedAt)||Date.now()};
+}
+async function liveFolderSnapshot(folder={}){
+  const normalized=normalizedLiveFolder(folder),scannedAt=Date.now();
+  try{
+    const stats=await fs.stat(normalized.path);if(!stats.isDirectory())throw new Error('The saved path is not a folder.');
+    const entries=await scanFolder(normalized.path,{live:true});
+    entries.forEach(entry=>{entry.liveFolderId=normalized.id;entry.liveTrackId=`live-track-${crypto.createHash('sha1').update(`${normalized.id}\0${String(entry.relativePath||entry.name).toLowerCase()}`).digest('hex').slice(0,20)}`});
+    return{ok:true,folder:{...normalized,status:'synced',lastSyncedAt:scannedAt,trackCount:entries.filter(entry=>entry.kind==='audio').length},entries,scannedAt};
+  }catch(error){return{ok:false,folder:{...normalized,status:'offline',lastCheckedAt:scannedAt},entries:[],scannedAt,error:error?.message||'The folder could not be scanned.'}}
+}
+function closeLiveFolderWatcher(id){
+  const record=liveFolderWatchers.get(id);if(!record)return;
+  clearTimeout(record.debounceTimer);clearInterval(record.pollTimer);try{record.watcher?.close()}catch{/* Already closed. */}liveFolderWatchers.delete(id);
+}
+function attachLiveFolderWatcher(record){
+  if(record.watcher)return;
+  try{
+    record.watcher=fsNative.watch(record.folder.path,{recursive:true},(_event,fileName)=>{
+      if(fileName){const extension=path.extname(String(fileName)).toLowerCase();if(extension&&!audioExtensions.has(extension)&&!imageExtensions.has(extension))return}
+      scheduleLiveFolderScan(record);
+    });
+    record.watcher.on('error',()=>{try{record.watcher?.close()}catch{/* Watcher already failed. */}record.watcher=null;scheduleLiveFolderScan(record,800)});
+    record.watcher.unref?.();
+  }catch{record.watcher=null}
+}
+function scheduleLiveFolderScan(record,delay=1200){
+  clearTimeout(record.debounceTimer);record.debounceTimer=setTimeout(async()=>{
+    if(record.scanning){record.rescanQueued=true;return}record.scanning=true;
+    try{const snapshot=await liveFolderSnapshot(record.folder);if(snapshot.ok)attachLiveFolderWatcher(record);if(!record.webContents.isDestroyed())record.webContents.send('library:live-folder-snapshot',snapshot)}
+    finally{record.scanning=false;if(record.rescanQueued){record.rescanQueued=false;scheduleLiveFolderScan(record,250)}}
+  },delay);record.debounceTimer.unref?.();
+}
+function registerLiveFolder(folder,webContents){
+  const normalized=normalizedLiveFolder(folder),existing=liveFolderWatchers.get(normalized.id);
+  if(existing&&existing.folder.path===normalized.path){existing.folder=normalized;existing.webContents=webContents;attachLiveFolderWatcher(existing);return existing}
+  if(existing)closeLiveFolderWatcher(normalized.id);
+  const record={folder:normalized,webContents,watcher:null,debounceTimer:null,pollTimer:null,scanning:false,rescanQueued:false};
+  liveFolderWatchers.set(normalized.id,record);attachLiveFolderWatcher(record);
+  record.pollTimer=setInterval(()=>scheduleLiveFolderScan(record,50),60000);record.pollTimer.unref?.();return record;
+}
+async function syncLiveFolders(folders=[],webContents){
+  const normalized=(Array.isArray(folders)?folders:[]).filter(folder=>folder?.path||folder?.root).map(normalizedLiveFolder),activeIds=new Set(normalized.map(folder=>folder.id));
+  for(const id of liveFolderWatchers.keys())if(!activeIds.has(id))closeLiveFolderWatcher(id);
+  normalized.forEach(folder=>registerLiveFolder(folder,webContents));
+  return Promise.all(normalized.map(liveFolderSnapshot));
 }
 
 async function importZipArchive(archivePath) {
@@ -579,6 +642,14 @@ app.whenReady().then(() => {
     const root = result.filePaths[0];
     return { root, name: path.basename(root), entries: await scanFolder(root) };
   });
+  ipcMain.handle('library:add-live-folder', async event => {
+    const result=await dialog.showOpenDialog({title:'Add a live music folder',properties:['openDirectory']});
+    if(result.canceled||!result.filePaths[0])return null;
+    const folder=normalizedLiveFolder({path:result.filePaths[0],addedAt:Date.now()});registerLiveFolder(folder,event.sender);return liveFolderSnapshot(folder);
+  });
+  ipcMain.handle('library:sync-live-folders', async (event, folders) => syncLiveFolders(folders,event.sender));
+  ipcMain.handle('library:rescan-live-folder', async (event, folder) => {const record=registerLiveFolder(folder,event.sender);return liveFolderSnapshot(record.folder)});
+  ipcMain.handle('library:remove-live-folder', async (_event,id) => {closeLiveFolderWatcher(String(id||''));return true});
   ipcMain.handle('library:choose-zip', async () => {
     const result=await dialog.showOpenDialog({title:'Import music from ZIP',properties:['openFile'],filters:[{name:'ZIP archives',extensions:['zip']}]});
     if(result.canceled||!result.filePaths[0])return null;
@@ -604,4 +675,5 @@ app.whenReady().then(() => {
   createWindow();
   app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow());
 });
+app.on('before-quit',()=>{for(const id of [...liveFolderWatchers.keys()])closeLiveFolderWatcher(id)});
 app.on('window-all-closed', () => process.platform !== 'darwin' && app.quit());
