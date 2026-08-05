@@ -1,9 +1,9 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.29",
-  "publishedAt": "2026-08-04T22:13:59.5368398Z",
+  "version": "0.1.30",
+  "publishedAt": "2026-08-05T18:46:53.5870195Z",
   "notes": "Adds Windows media-key support for play/pause, previous, next, and stop, plus Media Session play, pause, track navigation, stop, and seeking actions. Native taskbar thumbnail controls now provide previous, context-aware play/pause, and next buttons, stay synchronized with Firefly playback, disable when no track is selected, and show the current track in the thumbnail tooltip.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.29/Firefly-0.1.29-Setup.exe",
-  "sha256": "DEEE28CE3C7EB4CE581C855495B2A1D1AFD6CF5DB2788005A13AD7D7C6DEE74F"
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.30/Firefly-0.1.30-Setup.exe",
+  "sha256": "16D21380BF334FBB7FBF2122C91273C218E985137682D38616CCC03D9F5601FE"
 }
