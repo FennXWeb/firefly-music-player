@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, dialog, ipcMain, safeStorage, session, net } = require('electron');
+const { app, BrowserWindow, shell, dialog, ipcMain, safeStorage, session, net, globalShortcut, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const fsNative = require('fs');
@@ -29,8 +29,51 @@ const apiPassBaseUrl = 'https://api.apipass.dev';
 const updateRepository = 'FennXWeb/firefly-music-player';
 const updateBranches = { stable: 'main', beta: 'beta' };
 let preparedUpdate = null;
+let primaryWindow = null;
+let nativePlaybackState = { playing: false, hasTrack: false, title: '', artist: '', album: '' };
 const liveFolderWatchers = new Map();
 const liveEntryCache = new Map();
+
+const taskbarIconData = {
+  previous: 'iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAS0lEQVR4nO3POwoAMAhEQe9/6U2VRvCzKoSAr14GFdmYACAc3DLYCAhVGdRQC7QwGvQgGsz2Dhx/OXt5CfTQMmjBbVBvox3VOPhnB5a2xkg1hCLdAAAAAElFTkSuQmCC',
+  play: 'iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAR0lEQVR4nO3P0QkAIAwD0e6/dMQ/KVZtGhDEG+DBmf16ACAHpShccrAMRyCNrkAKPgFT6BVQtpyCdiCFzUAa8mAZGkEZ9n4N/qc22IE0LvwAAAAASUVORK5CYII=',
+  pause: 'iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAIElEQVR4nGNgGAUg8B8JkCI3auCogaMGjhpImoHDGwAAPUFOwNAX5xQAAAAASUVORK5CYII=',
+  next: 'iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAS0lEQVR4nO3PMQ4AIAgDQP7/6TppjEEowuBA5/aSinQAoBxkUWyhSh78BFqDFKiN0uA5LgMn8C9YdtnqhkGvS4PXYhS0oDDIYJ2VATraxkiKxaCQAAAAAElFTkSuQmCC'
+};
+const taskbarIcons = {};
+const mediaAccelerators = new Map([
+  ['Media Play/Pause', 'toggle'],
+  ['Media Next Track', 'next'],
+  ['Media Previous Track', 'previous'],
+  ['Media Stop', 'stop']
+]);
+
+function taskbarIcon(name) {
+  taskbarIcons[name] ||= nativeImage.createFromBuffer(Buffer.from(taskbarIconData[name], 'base64'));
+  return taskbarIcons[name];
+}
+function sendMediaCommand(command, win = primaryWindow) {
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return false;
+  win.webContents.send('media:command', command);
+  return true;
+}
+function updateTaskbarControls(win = primaryWindow) {
+  if (process.platform !== 'win32' || !win || win.isDestroyed()) return;
+  const enabled = nativePlaybackState.hasTrack ? ['enabled'] : ['disabled'];
+  win.setThumbarButtons([
+    { tooltip: 'Previous track', icon: taskbarIcon('previous'), flags: enabled, click: () => sendMediaCommand('previous', win) },
+    { tooltip: nativePlaybackState.playing ? 'Pause' : 'Play', icon: taskbarIcon(nativePlaybackState.playing ? 'pause' : 'play'), flags: enabled, click: () => sendMediaCommand('toggle', win) },
+    { tooltip: 'Next track', icon: taskbarIcon('next'), flags: enabled, click: () => sendMediaCommand('next', win) }
+  ]);
+  const details = nativePlaybackState.hasTrack ? `${nativePlaybackState.title}${nativePlaybackState.artist ? ` — ${nativePlaybackState.artist}` : ''}` : 'Firefly';
+  win.setThumbnailToolTip(details);
+}
+function registerMediaHotkeys() {
+  for (const [accelerator, command] of mediaAccelerators) {
+    try { globalShortcut.register(accelerator, () => sendMediaCommand(command)); }
+    catch { /* Some keyboards or Windows utilities reserve individual media keys. */ }
+  }
+}
 
 const audioExtensions = new Set(['.mp3','.wav','.flac','.m4a','.aac','.ogg','.opus','.wma']);
 const imageExtensions = new Set(['.jpg','.jpeg','.png','.webp','.bmp']);
@@ -647,6 +690,9 @@ function createWindow() {
     titleBarOverlay: { color: '#09090900', symbolColor: '#8f8b86', height: 42 },
     webPreferences: { contextIsolation: true, sandbox: true, webviewTag: true, preload: path.join(__dirname, 'preload.js') }
   });
+  primaryWindow = win;
+  updateTaskbarControls(win);
+  win.on('closed', () => { if (primaryWindow === win) primaryWindow = null; });
   win.webContents.on('will-attach-webview', (event, webPreferences, params) => {
     webPreferences.nodeIntegration = false;
     webPreferences.contextIsolation = true;
@@ -668,6 +714,8 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  if (process.platform === 'win32') app.setAppUserModelId('com.firefly.music');
+  registerMediaHotkeys();
   session.defaultSession.webRequest.onBeforeSendHeaders(
     { urls: ['https://www.youtube.com/embed/*'] },
     (details, callback) => callback({ requestHeaders: { ...details.requestHeaders, Referer: 'https://firefly.local/' } })
@@ -697,6 +745,19 @@ app.whenReady().then(() => {
   ipcMain.handle('state:open-directory', async () => {
     await fs.mkdir(dataDirectory, { recursive: true });
     return shell.openPath(dataDirectory);
+  });
+  ipcMain.on('media:playback-state', (event, state = {}) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return;
+    nativePlaybackState = {
+      playing: Boolean(state.playing),
+      hasTrack: Boolean(state.hasTrack),
+      title: String(state.title || '').slice(0, 180),
+      artist: String(state.artist || '').slice(0, 180),
+      album: String(state.album || '').slice(0, 180)
+    };
+    primaryWindow = win;
+    updateTaskbarControls(win);
   });
   ipcMain.handle('library:choose-files', async () => {
     const result = await dialog.showOpenDialog({
@@ -752,5 +813,5 @@ app.whenReady().then(() => {
   createWindow();
   app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow());
 });
-app.on('before-quit',()=>{for(const id of [...liveFolderWatchers.keys()])closeLiveFolderWatcher(id)});
+app.on('before-quit',()=>{for(const accelerator of mediaAccelerators.keys())globalShortcut.unregister(accelerator);for(const id of [...liveFolderWatchers.keys()])closeLiveFolderWatcher(id)});
 app.on('window-all-closed', () => process.platform !== 'darwin' && app.quit());

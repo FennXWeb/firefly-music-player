@@ -3,7 +3,7 @@
   "branch": "beta",
   "version": "0.1.29",
   "publishedAt": "2026-08-04T22:13:59.5368398Z",
-  "notes": "Adds first-class cloud music sync for OneDrive, Dropbox, Google Drive, iCloud Drive, Box, Nextcloud, and other Windows-synced folders. Linked sources are watched and periodically reconciled; supported audio, embedded metadata, artwork, lyrics, album grouping, additions, edits, and removals flow into Firefly automatically without touching the cloud originals.",
+  "notes": "Adds Windows media-key support for play/pause, previous, next, and stop, plus Media Session play, pause, track navigation, stop, and seeking actions. Native taskbar thumbnail controls now provide previous, context-aware play/pause, and next buttons, stay synchronized with Firefly playback, disable when no track is selected, and show the current track in the thumbnail tooltip.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.29/Firefly-0.1.29-Setup.exe",
   "sha256": "DEEE28CE3C7EB4CE581C855495B2A1D1AFD6CF5DB2788005A13AD7D7C6DEE74F"
 }
