@@ -1,9 +1,9 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.32",
-  "publishedAt": "2026-08-08T22:17:39.2152217Z",
+  "version": "0.1.33",
+  "publishedAt": "2026-08-08T23:04:00.7349735Z",
   "notes": "Replaces folder-based cloud connections with Firefly Accounts: secure email or phone sign-in by password or one-time code, passkeys, encrypted desktop sessions, opt-in cross-PC backup and restore, and a 150 MB per-account quota. Sync covers music files, playlists, metadata, settings, artwork, favorites, and listening history. Includes the deployable Hostinger-compatible Node.js/MySQL account service as a separate beta release asset.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.32/Firefly-0.1.32-Setup.exe",
-  "sha256": "616D998AC8F00554419C150267AAA4546F943F23B620A736F36843A0CDA3AAFE"
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.33/Firefly-0.1.33-Setup.exe",
+  "sha256": "7AD8BF3F6B0B237A5F63C414F3887C99BA3F344420F7A9B49ED1728800F08C51"
 }
