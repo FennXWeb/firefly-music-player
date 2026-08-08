@@ -1,6 +1,6 @@
 {
   "name": "firefly-music",
-  "version": "0.1.31",
+  "version": "0.1.32",
   "private": true,
   "description": "A highly customizable, local-first music player for Windows.",
   "author": "Firefly",
@@ -61,6 +61,7 @@
   },
   "dependencies": {
     "adm-zip": "^0.6.0",
+    "discord-rpc": "^4.0.1",
     "music-metadata": "^11.14.0"
   }
 }

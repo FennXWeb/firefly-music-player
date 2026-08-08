@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { pathToFileURL, fileURLToPath } = require('url');
 const AdmZip = require('adm-zip');
+const DiscordRPC = require('discord-rpc');
 
 // Keep user content completely separate from the portable executable and its
 // temporary extraction directory. This path is stable across Firefly upgrades.
@@ -30,7 +31,14 @@ const updateRepository = 'FennXWeb/firefly-music-player';
 const updateBranches = { stable: 'main', beta: 'beta' };
 let preparedUpdate = null;
 let primaryWindow = null;
-let nativePlaybackState = { playing: false, hasTrack: false, title: '', artist: '', album: '' };
+let nativePlaybackState = { playing: false, hasTrack: false, title: '', artist: '', album: '', durationSeconds: 0, positionSeconds: 0, artworkUrl: '' };
+let discordClient = null;
+let discordClientId = '';
+let discordConfig = { enabled: false, applicationId: '', showTrack: true, showAlbum: true, showPaused: true, timeDisplay: 'elapsed', shareArtwork: true, showButton: false, largeImageKey: '' };
+let discordStatus = { status: 'disabled', error: '' };
+let discordReconnectTimer = null;
+let discordConnectionToken = 0;
+let lastDiscordActivity = '';
 const liveFolderWatchers = new Map();
 const liveEntryCache = new Map();
 
@@ -73,6 +81,119 @@ function registerMediaHotkeys() {
     try { globalShortcut.register(accelerator, () => sendMediaCommand(command)); }
     catch { /* Some keyboards or Windows utilities reserve individual media keys. */ }
   }
+}
+
+function cleanDiscordConfig(value = {}) {
+  const timeDisplay = ['off', 'elapsed', 'remaining'].includes(value.timeDisplay) ? value.timeDisplay : 'elapsed';
+  return {
+    enabled: Boolean(value.enabled),
+    applicationId: String(value.applicationId || '').trim().replace(/\D/g, '').slice(0, 22),
+    showTrack: value.showTrack !== false,
+    showAlbum: value.showAlbum !== false,
+    showPaused: value.showPaused !== false,
+    timeDisplay,
+    shareArtwork: value.shareArtwork !== false,
+    showButton: Boolean(value.showButton),
+    largeImageKey: String(value.largeImageKey || '').trim().slice(0, 128)
+  };
+}
+function sendDiscordStatus(status, error = '') {
+  discordStatus = { status, error: String(error || '').slice(0, 240) };
+  if (primaryWindow && !primaryWindow.isDestroyed() && !primaryWindow.webContents.isDestroyed()) primaryWindow.webContents.send('discord:status', discordStatus);
+  return discordStatus;
+}
+function clearDiscordReconnect() {
+  if (discordReconnectTimer) clearTimeout(discordReconnectTimer);
+  discordReconnectTimer = null;
+}
+function destroyDiscordClient(status = 'disabled') {
+  clearDiscordReconnect();
+  discordConnectionToken += 1;
+  const client = discordClient;
+  discordClient = null;
+  discordClientId = '';
+  lastDiscordActivity = '';
+  if (client) Promise.resolve(client.destroy()).catch(() => {});
+  return sendDiscordStatus(status);
+}
+function scheduleDiscordReconnect() {
+  clearDiscordReconnect();
+  if (!discordConfig.enabled || !/^\d{15,22}$/.test(discordConfig.applicationId)) return;
+  discordReconnectTimer = setTimeout(() => connectDiscord(), 30000);
+  discordReconnectTimer.unref?.();
+}
+function discordActivity() {
+  if (!nativePlaybackState.hasTrack || (!nativePlaybackState.playing && !discordConfig.showPaused)) return null;
+  const title = nativePlaybackState.title || 'Unknown track';
+  const artist = nativePlaybackState.artist || 'Unknown artist';
+  const activity = {
+    details: discordConfig.showTrack ? title.slice(0, 128) : (nativePlaybackState.playing ? 'Listening in Firefly' : 'Paused in Firefly'),
+    state: (discordConfig.showAlbum && nativePlaybackState.album ? `${artist} — ${nativePlaybackState.album}` : artist).slice(0, 128),
+    instance: false
+  };
+  if (nativePlaybackState.playing && discordConfig.timeDisplay === 'elapsed') activity.startTimestamp = new Date(Date.now() - nativePlaybackState.positionSeconds * 1000);
+  if (nativePlaybackState.playing && discordConfig.timeDisplay === 'remaining' && nativePlaybackState.durationSeconds > nativePlaybackState.positionSeconds) activity.endTimestamp = new Date(Date.now() + (nativePlaybackState.durationSeconds - nativePlaybackState.positionSeconds) * 1000);
+  const externalArtwork = discordConfig.shareArtwork && /^https:\/\//i.test(nativePlaybackState.artworkUrl) ? nativePlaybackState.artworkUrl : '';
+  if (externalArtwork || discordConfig.largeImageKey) {
+    activity.largeImageKey = externalArtwork || discordConfig.largeImageKey;
+    activity.largeImageText = `${nativePlaybackState.album || title} · Firefly`.slice(0, 128);
+  }
+  if (discordConfig.showButton) activity.buttons = [{ label: 'Get Firefly', url: 'https://github.com/FennXWeb/firefly-music-player' }];
+  return activity;
+}
+async function updateDiscordPresence(force = false) {
+  if (!discordClient || discordStatus.status !== 'connected') return;
+  const activity = discordActivity();
+  const key = activity ? JSON.stringify({ ...activity, startTimestamp: activity.startTimestamp?.getTime(), endTimestamp: activity.endTimestamp?.getTime() }) : 'clear';
+  if (!force && key === lastDiscordActivity) return;
+  lastDiscordActivity = key;
+  try {
+    if (activity) await discordClient.setActivity(activity);
+    else await discordClient.clearActivity();
+  } catch (error) {
+    lastDiscordActivity = '';
+    sendDiscordStatus('unavailable', error?.message || 'Discord is unavailable.');
+    scheduleDiscordReconnect();
+  }
+}
+async function connectDiscord(nextConfig) {
+  if (nextConfig) discordConfig = cleanDiscordConfig(nextConfig);
+  if (!discordConfig.enabled) return destroyDiscordClient('disabled');
+  if (!/^\d{15,22}$/.test(discordConfig.applicationId)) return destroyDiscordClient('needs-id');
+  if (discordClient && discordClientId === discordConfig.applicationId && discordStatus.status === 'connected') {
+    await updateDiscordPresence(true);
+    return discordStatus;
+  }
+  destroyDiscordClient('connecting');
+  const token = discordConnectionToken;
+  const client = new DiscordRPC.Client({ transport: 'ipc' });
+  discordClient = client;
+  discordClientId = discordConfig.applicationId;
+  const disconnect = () => {
+    if (discordClient !== client || token !== discordConnectionToken) return;
+    discordClient = null;
+    discordClientId = '';
+    lastDiscordActivity = '';
+    sendDiscordStatus('unavailable', 'Discord is closed or its local connection was interrupted.');
+    scheduleDiscordReconnect();
+  };
+  client.on('disconnected', disconnect);
+  client.on('error', disconnect);
+  try {
+    await client.login({ clientId: discordConfig.applicationId });
+    if (discordClient !== client || token !== discordConnectionToken) return discordStatus;
+    sendDiscordStatus('connected');
+    await updateDiscordPresence(true);
+  } catch (error) {
+    if (discordClient === client && token === discordConnectionToken) {
+      discordClient = null;
+      discordClientId = '';
+      Promise.resolve(client.destroy()).catch(() => {});
+      sendDiscordStatus('unavailable', error?.message || 'Open Discord and try again.');
+      scheduleDiscordReconnect();
+    }
+  }
+  return discordStatus;
 }
 
 const audioExtensions = new Set(['.mp3','.wav','.flac','.m4a','.aac','.ogg','.opus','.wma']);
@@ -767,10 +888,19 @@ app.whenReady().then(() => {
       hasTrack: Boolean(state.hasTrack),
       title: String(state.title || '').slice(0, 180),
       artist: String(state.artist || '').slice(0, 180),
-      album: String(state.album || '').slice(0, 180)
+      album: String(state.album || '').slice(0, 180),
+      durationSeconds: Math.max(0, Number(state.durationSeconds) || 0),
+      positionSeconds: Math.max(0, Number(state.positionSeconds) || 0),
+      artworkUrl: String(state.artworkUrl || '').slice(0, 2048)
     };
     primaryWindow = win;
     updateTaskbarControls(win);
+    updateDiscordPresence();
+  });
+  ipcMain.handle('discord:configure', async (event, config) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win && !win.isDestroyed()) primaryWindow = win;
+    return connectDiscord(config);
   });
   ipcMain.handle('library:choose-files', async () => {
     const result = await dialog.showOpenDialog({
@@ -826,5 +956,5 @@ app.whenReady().then(() => {
   createWindow();
   app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow());
 });
-app.on('before-quit',()=>{for(const accelerator of mediaAccelerators.keys())globalShortcut.unregister(accelerator);for(const id of [...liveFolderWatchers.keys()])closeLiveFolderWatcher(id)});
+app.on('before-quit',()=>{destroyDiscordClient('disabled');for(const accelerator of mediaAccelerators.keys())globalShortcut.unregister(accelerator);for(const id of [...liveFolderWatchers.keys()])closeLiveFolderWatcher(id)});
 app.on('window-all-closed', () => process.platform !== 'darwin' && app.quit());

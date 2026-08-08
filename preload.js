@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('firefly', {
   onLiveFolderSnapshot: callback => { const listener = (_event, snapshot) => callback(snapshot); ipcRenderer.on('library:live-folder-snapshot', listener); return () => ipcRenderer.removeListener('library:live-folder-snapshot', listener); },
   setPlaybackState: state => ipcRenderer.send('media:playback-state', state),
   onMediaCommand: callback => { const listener = (_event, command) => callback(command); ipcRenderer.on('media:command', listener); return () => ipcRenderer.removeListener('media:command', listener); },
+  configureDiscordPresence: config => ipcRenderer.invoke('discord:configure', config),
+  onDiscordStatus: callback => { const listener = (_event, status) => callback(status); ipcRenderer.on('discord:status', listener); return () => ipcRenderer.removeListener('discord:status', listener); },
   chooseMusicZip: () => ipcRenderer.invoke('library:choose-zip'),
   loadState: () => ipcRenderer.invoke('state:load'),
   saveState: state => ipcRenderer.invoke('state:save', state),

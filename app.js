@@ -20,7 +20,8 @@ const defaultSettings = {
   gapless: true, crossfade: 4, volume: 72, playbackRate:1, preservePitch:true, autoplayNext:true, preloadAudio:true, stopAfterCurrent:false,
   muted: false, shuffle: false, repeatMode: 'off', songSort: 'added-desc', albumView:'grid', albumFilter:'all', playlistDefaultSort:'manual', confirmDeletes:true, showPendingTracks:true, dynamicArtByDefault: false,
   onlineMetadata:true, onlineLyrics:true, onlineArtistImages:true, onlineMusicVideos:true,
-  sunoEndpoint: 'https://api.apipass.dev', sunoModel: 'V5_5', sunoChannel: 'auto', updateChannel: 'stable', visualizerStyle:'waves'
+  sunoEndpoint: 'https://api.apipass.dev', sunoModel: 'V5_5', sunoChannel: 'auto', updateChannel: 'stable', visualizerStyle:'waves',
+  discordRichPresence:false, discordApplicationId:'', discordShowTrack:true, discordShowAlbum:true, discordShowPaused:true, discordTimeDisplay:'elapsed', discordShareArtwork:true, discordShowButton:false, discordLargeImageKey:''
 };
 let settings = { ...defaultSettings };
 let credentials = { openaiKey: '', sunoToken: '' };
@@ -71,6 +72,8 @@ let dynamicDefaultQueue = Promise.resolve();
 let libraryRevision = 0;
 let renderedLibraryRevision = 0;
 let dynamicViewRefreshTimer = null;
+let discordPresenceState = { status:'disabled', error:'' };
+let lastDiscordProgressSync = 0;
 const VIDEO_RECHECK_MS = 14 * 24 * 60 * 60 * 1000;
 
 const view = $('#view');
@@ -271,6 +274,7 @@ async function initializePersistence() {
   initializeLiveFolderSync();
   initializeUpdater();
   initializeSunoPolling();
+  configureDiscordPresence();
 }
 function toast(title, detail = '') {
   const el = document.createElement('div');
@@ -886,6 +890,25 @@ function nowPlayingContext(x,y) {
 function settingToggle(key,title,description){return `<div class="setting-row"><div><b>${title}</b><small>${description}</small></div><button class="switch ${settings[key]?'on':''}" data-setting-toggle="${key}" aria-pressed="${Boolean(settings[key])}"></button></div>`}
 function settingSelect(key,title,description,options){return `<div class="setting-row"><div><b>${title}</b><small>${description}</small></div><select data-setting-select="${key}">${options.map(([value,label])=>`<option value="${value}" ${String(settings[key])===String(value)?'selected':''}>${label}</option>`).join('')}</select></div>`}
 function settingRange(key,title,description,min,max,step=1,suffix=''){return `<div class="setting-row"><div><b>${title}</b><small>${description}</small></div><span class="setting-range"><input type="range" min="${min}" max="${max}" step="${step}" value="${settings[key]}" data-setting-range="${key}" style="--range:${(Number(settings[key])-min)/(max-min)*100}%"><output>${settings[key]}${suffix}</output></span></div>`}
+function discordPresenceConfig(){return {enabled:settings.discordRichPresence,applicationId:settings.discordApplicationId,showTrack:settings.discordShowTrack,showAlbum:settings.discordShowAlbum,showPaused:settings.discordShowPaused,timeDisplay:settings.discordTimeDisplay,shareArtwork:settings.discordShareArtwork,showButton:settings.discordShowButton,largeImageKey:settings.discordLargeImageKey}}
+function discordStatusCopy(){
+  if(!settings.discordRichPresence)return ['disabled','Off','Enable sharing when you want Firefly to appear on Discord.'];
+  const labels={connected:['connected','Connected','Discord is receiving your current Firefly playback.'],connecting:['connecting','Connecting','Looking for the Discord desktop app…'],'needs-id':['warning','Application ID needed','Create a Discord application, then paste its numeric Application ID.'],unavailable:['warning','Waiting for Discord',discordPresenceState.error||'Open the Discord desktop app and Firefly will reconnect automatically.'],error:['warning','Connection error',discordPresenceState.error||'Check the Application ID and try again.']};
+  return labels[discordPresenceState.status]||labels.connecting;
+}
+function updateDiscordStatusView(){
+  const element=$('#discordPresenceStatus');if(!element)return;
+  const [kind,title,detail]=discordStatusCopy();element.className=`discord-presence-status ${kind}`;element.innerHTML=`<i></i><span><b>${esc(title)}</b><small>${esc(detail)}</small></span>`;
+}
+async function configureDiscordPresence(notify=false){
+  if(!window.firefly?.configureDiscordPresence)return;
+  discordPresenceState={status:settings.discordRichPresence?'connecting':'disabled',error:''};updateDiscordStatusView();
+  try{discordPresenceState=await window.firefly.configureDiscordPresence(discordPresenceConfig())||discordPresenceState}
+  catch(error){discordPresenceState={status:'error',error:error.message||'Discord could not be configured.'}}
+  updateDiscordStatusView();
+  if(notify){const [,title,detail]=discordStatusCopy();toast(title,detail)}
+}
+function discordSettingsMarkup(){return `<div class="settings-section discord-settings-section"><div class="settings-section-heading"><span><small class="discord-kicker">DISCORD</small><h3>Rich Presence</h3></span><a class="ghost discord-portal-link" href="https://discord.com/developers/applications" target="_blank" rel="noreferrer">Developer Portal ↗</a></div>${settingToggle('discordRichPresence','Share listening activity','Show the current track, artist, album, and playback state on your Discord profile')}<div class="setting-row"><div><b>Application ID</b><small>Create an app in Discord’s Developer Portal and copy its numeric Application ID</small></div><input id="discordApplicationId" type="text" inputmode="numeric" value="${esc(settings.discordApplicationId)}" placeholder="Required to connect" autocomplete="off" spellcheck="false"></div>${settingToggle('discordShowTrack','Show track title','Share the title of the song that is playing')}${settingToggle('discordShowAlbum','Show album name','Include the album alongside the artist')}${settingToggle('discordShowPaused','Show paused status','Keep Rich Presence visible while playback is paused')}${settingSelect('discordTimeDisplay','Playback timer','Choose whether Discord shows elapsed or remaining time',[['elapsed','Elapsed time'],['remaining','Time remaining'],['off','Hidden']])}${settingToggle('discordShareArtwork','Share online album artwork','Use HTTPS cover artwork when Discord supports the source')}${settingToggle('discordShowButton','Show Firefly button','Add a button linking friends to the Firefly project')}<div class="setting-row"><div><b>Fallback artwork asset</b><small>Optional asset key uploaded under Rich Presence → Art Assets (for example, firefly)</small></div><input id="discordLargeImageKey" type="text" value="${esc(settings.discordLargeImageKey)}" placeholder="Optional asset key" autocomplete="off" spellcheck="false"></div><div class="setting-row discord-status-row"><div id="discordPresenceStatus" class="discord-presence-status"><i></i><span><b>Status</b><small>Checking the connection…</small></span></div><button class="ghost" id="reconnectDiscord">Reconnect</button></div></div>`}
 function updateStatusText(){return updateState.status==='available'?`Version ${esc(updateState.version)} is available`:updateState.status==='error'?esc(updateState.error||'Update check failed'):updateState.status==='checking'?'Checking GitHub now…':updateState.status==='downloading'?'Downloading in the background…':updateState.status==='installing'?'Verifying and preparing…':updateState.status==='ready'?'Ready · restart to apply':'Firefly checks when it opens and every 30 minutes'}
 function settingsPanelMarkup(tab){
   if(tab==='appearance')return `<header><span class="eyebrow">APPEARANCE</span><h2>Shape the entire interface</h2><p>Color, scale, spacing, surfaces, and motion update immediately.</p></header>
@@ -908,17 +931,21 @@ function settingsPanelMarkup(tab){
 function renderSettings() {
   const tabs=[['appearance','Appearance'],['playback','Playback'],['library','Library'],['integrations','Integrations'],['privacy','Privacy & control']];
   view.innerHTML = pageHead('MAKE IT YOURS','Settings','Tune every part of Firefly without interrupting playback.') + `<div class="settings-grid"><nav class="settings-menu">${tabs.map(([value,label])=>`<button class="${settingsTab===value?'active':''}" data-settings-tab="${value}">${label}</button>`).join('')}</nav><section class="settings-panel" data-settings-panel="${settingsTab}">${settingsPanelMarkup(settingsTab)}</section></div>`;
+  if(settingsTab==='integrations'){const sections=$$('.settings-section',view);(sections[1]||sections[0])?.insertAdjacentHTML(sections[1]?'beforebegin':'afterend',discordSettingsMarkup());updateDiscordStatusView()}
   $$('[data-settings-tab]',view).forEach(button=>button.onclick=()=>{settingsTab=button.dataset.settingsTab;renderSettings()});
   $$('.accent-swatches [data-accent]',view).forEach(button=>button.onclick=()=>{settings.accent=button.dataset.accent;settings.accentRgb=button.dataset.rgb;applySettings();saveLibrary();renderSettings()});
   if($('#customAccent'))$('#customAccent').oninput=event=>{const hex=event.target.value,parts=hex.match(/[a-f\d]{2}/gi).map(value=>parseInt(value,16));settings.accent=hex;settings.accentRgb=parts.join(',');applySettings();saveLibrary()};
-  $$('[data-setting-toggle]',view).forEach(button=>button.onclick=()=>{const key=button.dataset.settingToggle;settings[key]=!settings[key];if(key==='shuffle')setShuffleEnabled(settings[key],{persist:false});if(key==='repeatMode')repeatMode=settings.repeatMode;applySettings();saveLibrary();renderSettings()});
-  $$('[data-setting-select]',view).forEach(select=>select.onchange=()=>{const key=select.dataset.settingSelect;settings[key]=select.value;if(key==='playbackRate')settings[key]=Number(select.value);if(key==='repeatMode')repeatMode=settings.repeatMode;if(key==='visualizerStyle')visualizerStyle=settings.visualizerStyle;applySettings();saveLibrary();render()});
+  $$('[data-setting-toggle]',view).forEach(button=>button.onclick=()=>{const key=button.dataset.settingToggle;settings[key]=!settings[key];if(key==='shuffle')setShuffleEnabled(settings[key],{persist:false});if(key==='repeatMode')repeatMode=settings.repeatMode;applySettings();saveLibrary();if(key.startsWith('discord'))configureDiscordPresence();renderSettings()});
+  $$('[data-setting-select]',view).forEach(select=>select.onchange=()=>{const key=select.dataset.settingSelect;settings[key]=select.value;if(key==='playbackRate')settings[key]=Number(select.value);if(key==='repeatMode')repeatMode=settings.repeatMode;if(key==='visualizerStyle')visualizerStyle=settings.visualizerStyle;if(key.startsWith('discord'))configureDiscordPresence();applySettings();saveLibrary();render()});
   $$('[data-setting-range]',view).forEach(range=>range.oninput=()=>{const key=range.dataset.settingRange,value=Number(range.value),percent=(value-Number(range.min))/(Number(range.max)-Number(range.min))*100;settings[key]=value;range.style.setProperty('--range',`${percent}%`);range.nextElementSibling.textContent=`${value}${key==='volume'||key==='uiScale'?'%':key==='playbackRate'?'×':key==='crossfade'?' sec':''}`;if(key==='volume')setVolume(value);else{applySettings();saveLibrary()}});
   if($('#updateChannel'))$('#updateChannel').onchange=e=>{settings.updateChannel=e.target.value==='beta'?'beta':'stable';updateState={status:'idle',channel:settings.updateChannel,available:false,progress:null};saveLibrary();renderUpdateWidget();checkForUpdates(true)};
   if($('#checkForUpdates'))$('#checkForUpdates').onclick=()=>checkForUpdates(true);if($('#showUpdateDetails'))$('#showUpdateDetails').onclick=openUpdateModal;
+  if($('#discordApplicationId'))$('#discordApplicationId').onchange=e=>{settings.discordApplicationId=e.target.value.replace(/\D/g,'').slice(0,22);e.target.value=settings.discordApplicationId;saveLibrary();configureDiscordPresence(true)};
+  if($('#discordLargeImageKey'))$('#discordLargeImageKey').onchange=e=>{settings.discordLargeImageKey=e.target.value.trim().slice(0,128);saveLibrary();configureDiscordPresence(true)};
+  if($('#reconnectDiscord'))$('#reconnectDiscord').onclick=()=>configureDiscordPresence(true);
   if($('#openaiKey'))$('#openaiKey').onchange=e=>{credentials.openaiKey=e.target.value.trim();saveCredentials();if(credentials.openaiKey)albums.filter(album=>album.dynamicCaseArt?.autoGenerate).forEach(queueDefaultDynamicCase);toast('OpenAI key saved','Stored with Windows encryption.')};
   if($('#openDataFolder'))$('#openDataFolder').onclick=()=>window.firefly?.openDataDirectory();if($('#manageCloudSources'))$('#manageCloudSources').onclick=()=>cloudSources().length?openCloudSourcesModal():addCloudSource();if($('#manageLiveFolders'))$('#manageLiveFolders').onclick=()=>localLiveFolders().length?openLiveFoldersModal():addLiveFolder();if($('#connectSuno'))$('#connectSuno').onclick=connectSunoModal;
-  if($('#resetSettings'))$('#resetSettings').onclick=()=>confirmRemove('Reset preferences?','Music, playlists, artwork, and connections will stay intact.',()=>{const channel=settings.updateChannel;settings={...defaultSettings,updateChannel:channel};shuffleEnabled=settings.shuffle;repeatMode=settings.repeatMode;visualizerStyle=settings.visualizerStyle;applySettings();saveLibrary();renderSettings();toast('Preferences reset')});
+  if($('#resetSettings'))$('#resetSettings').onclick=()=>confirmRemove('Reset preferences?','Music, playlists, artwork, and connections will stay intact.',()=>{const channel=settings.updateChannel;settings={...defaultSettings,updateChannel:channel};shuffleEnabled=settings.shuffle;repeatMode=settings.repeatMode;visualizerStyle=settings.visualizerStyle;applySettings();saveLibrary();configureDiscordPresence();renderSettings();toast('Preferences reset')});
 }
 
 function sunoStateLabel(state='queuing'){return({queuing:'Queued',pending:'Queued',generating:'Generating',processing:'Generating',success:'Complete',fail:'Failed'}[state]||state)}
@@ -1425,7 +1452,8 @@ function playTrackQueue(tracks,shuffle=shuffleEnabled){
   playTrack(playbackQueue[0],true);
 }
 function syncNativePlaybackState(){
-  const state={playing:isPlaying,hasTrack:Boolean(currentTrack&&!currentTrack.pending),title:currentTrack?.title||'',artist:currentTrack?.artist||'',album:currentTrack?.album||''};
+  const album=albumById(currentTrack?.albumId),durationSeconds=currentTrack?.url?(Number(audio.duration)||Number(currentTrack?.durationSeconds)||0):(Number(currentTrack?.durationSeconds)||272),positionSeconds=currentTrack?.url?(Number(audio.currentTime)||0):durationSeconds*simProgress/100;
+  const state={playing:isPlaying,hasTrack:Boolean(currentTrack&&!currentTrack.pending),title:currentTrack?.title||'',artist:currentTrack?.artist||'',album:currentTrack?.album||'',durationSeconds,positionSeconds,artworkUrl:/^https:\/\//i.test(album?.customCover||'')?album.customCover:''};
   window.firefly?.setPlaybackState?.(state);
   if('mediaSession' in navigator){
     try{navigator.mediaSession.metadata=currentTrack?new MediaMetadata({title:state.title,artist:state.artist,album:state.album}):null;navigator.mediaSession.playbackState=state.hasTrack?(state.playing?'playing':'paused'):'none'}catch{/* Windows thumbnail controls remain available if Media Session metadata is unavailable. */}
@@ -1444,7 +1472,7 @@ function playTrack(track,preserveQueue=false){
   if(track.url){audio.volume=settings.muted?0:settings.volume/100;audio.src=track.url;audio.playbackRate=Math.max(.5,Math.min(2,Number(settings.playbackRate)||1));audio.play().then(()=>setPlaying(true)).catch(()=>toast('Playback needs a click','Press play once to allow local audio.'));}else{simProgress=0;setRange($('#progress'),0);setPlaying(true);commitPlayCount(track)}
   if($('#fullscreenPlayer').classList.contains('open')){if(fullscreenMode==='video')prepareTrackVideo(track);if(fullscreenMode==='lyrics')renderLyricsStage(track)}
 }
-function setPlaying(value){isPlaying=value;const name=value?'pause':'play';$('#playBtn').innerHTML=icon(name);$('#fullPlay').innerHTML=icon(name);renderQueue();syncNativePlaybackState();clearInterval(simTimer);if(value&&!currentTrack.url){simTimer=setInterval(()=>{simProgress=(simProgress+.22)%100;setRange($('#progress'),simProgress);$('#elapsed').textContent=formatTime(simProgress*2.72)},1000)}}
+function setPlaying(value){isPlaying=value;const name=value?'pause':'play';$('#playBtn').innerHTML=icon(name);$('#fullPlay').innerHTML=icon(name);renderQueue();syncNativePlaybackState();clearInterval(simTimer);if(value&&!currentTrack.url){simTimer=setInterval(()=>{simProgress=(simProgress+.22)%100;setRange($('#progress'),simProgress);$('#elapsed').textContent=formatTime(simProgress*2.72);if(Date.now()-lastDiscordProgressSync>15000){lastDiscordProgressSync=Date.now();syncNativePlaybackState()}},1000)}}
 function togglePlay(){if(!currentTrack){toast('Nothing to play','Import music first.');return}if(currentTrack.url){if(audio.paused)audio.play();else audio.pause()}else setPlaying(!isPlaying)}
 function formatTime(s){s=Math.floor(s);return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`}
 function nextTrack(dir=1,{ended=false}={}){const tracks=effectivePlaybackQueue();if(!tracks.length){toast(playbackQueueExplicit?'Queue finished':'Nothing to play',playbackQueueExplicit?'Add songs or start another collection.':'Import music first.');return}const idx=currentTrack?tracks.findIndex(t=>t.id===currentTrack.id):-1;if(ended&&settings.stopAfterCurrent){settings.stopAfterCurrent=false;setPlaying(false);saveLibrary();toast('Stopped after current track');return}if(ended&&!settings.autoplayNext){setPlaying(false);renderQueue();return}if(ended&&repeatMode==='one'){playTrack(currentTrack,true);return}if(ended&&idx===tracks.length-1&&repeatMode==='off'){setPlaying(false);renderQueue();return}const next=idx<0?(dir>=0?0:tracks.length-1):(idx+dir+tracks.length)%tracks.length;playTrack(tracks[next],playbackQueueExplicit)}
@@ -1708,8 +1736,8 @@ $('#folderInput').onchange=e=>{if(e.target.files.length){const entries=normalize
 $('#screenshotInput').onchange=e=>{if(e.target.files[0])screenshotWorkflow(e.target.files[0]);e.target.value=''};
 $('#playBtn').onclick=togglePlay;$('#fullPlay').onclick=togglePlay;$('#prevBtn').onclick=()=>nextTrack(-1);$('#nextBtn').onclick=()=>nextTrack(1);$('#fullPrev').onclick=()=>nextTrack(-1);$('#fullNext').onclick=()=>nextTrack(1);$('#fullscreenBtn').onclick=openFullscreen;$('#closeFull').onclick=closeFullscreen;
 $('#queueButton').onclick=()=>$('#queuePanel').classList.contains('open')?closeQueue():openQueue();$('#closeQueue').onclick=closeQueue;$('#queueBackdrop').onclick=closeQueue;$('#clearQueue').onclick=clearPlaybackQueue;
-audio.onplay=()=>{audio.volume=settings.muted?0:settings.volume/100;setPlaying(true);commitPlayCount(currentTrack)};audio.onpause=()=>setPlaying(false);audio.onended=()=>nextTrack(1,{ended:true});audio.ontimeupdate=()=>{if(!audio.duration)return;const p=audio.currentTime/audio.duration*100;setRange($('#progress'),p);$('#elapsed').textContent=formatTime(audio.currentTime);$('#duration').textContent=formatTime(audio.duration);updatePlaybackEnvelope();updateLyricsPosition(audio.currentTime)};
-$('#progress').oninput=e=>{setRange(e.target,e.target.value);if(currentTrack?.url&&audio.duration)audio.currentTime=audio.duration*e.target.value/100;else simProgress=Number(e.target.value)};
+audio.onplay=()=>{audio.volume=settings.muted?0:settings.volume/100;setPlaying(true);commitPlayCount(currentTrack)};audio.onpause=()=>setPlaying(false);audio.onended=()=>nextTrack(1,{ended:true});audio.ontimeupdate=()=>{if(!audio.duration)return;const p=audio.currentTime/audio.duration*100;setRange($('#progress'),p);$('#elapsed').textContent=formatTime(audio.currentTime);$('#duration').textContent=formatTime(audio.duration);updatePlaybackEnvelope();updateLyricsPosition(audio.currentTime);if(Date.now()-lastDiscordProgressSync>15000){lastDiscordProgressSync=Date.now();syncNativePlaybackState()}};
+$('#progress').oninput=e=>{setRange(e.target,e.target.value);if(currentTrack?.url&&audio.duration)audio.currentTime=audio.duration*e.target.value/100;else simProgress=Number(e.target.value);syncNativePlaybackState()};
 $('#volume').oninput=e=>setVolume(e.target.value);$('#volume').onchange=()=>{clearTimeout(volumePersistenceTimer);saveLibrary()};$('#volumeMute').onclick=toggleMute;
 $('#favoriteTrack').onclick=()=>currentTrack?setTrackFavorite(currentTrack):toast('Nothing is playing');
 $('#shuffleBtn').onclick=()=>{setShuffleEnabled(!shuffleEnabled);toast(shuffleEnabled?'Shuffle on':'Shuffle off',shuffleEnabled?(playbackQueueExplicit?'The active queue was reshuffled.':'New collections will play in random order.'):'Collections will play in their listed order.')};$('#repeatBtn').onclick=cycleRepeatMode;
@@ -1720,6 +1748,7 @@ $$('[data-visualizer]').forEach(btn=>btn.onclick=()=>setVisualizerStyle(btn.data
 window.addEventListener('resize',()=>{hideContextMenu();if($('#fullscreenPlayer').classList.contains('open'))resizeCanvas()});
 $('.content').addEventListener('scroll',hideContextMenu,{passive:true});
 window.firefly?.onMediaCommand?.(handleNativeMediaCommand);
+window.firefly?.onDiscordStatus?.(status=>{discordPresenceState=status||discordPresenceState;updateDiscordStatusView()});
 installMediaSessionHandlers();
 syncNativePlaybackState();
 document.addEventListener('keydown',e=>{
