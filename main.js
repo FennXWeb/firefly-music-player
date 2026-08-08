@@ -30,12 +30,13 @@ const cloudCacheDirectory = path.join(dataDirectory, 'cloud-library');
 const apiPassBaseUrl = 'https://api.apipass.dev';
 const updateRepository = 'FennXWeb/firefly-music-player';
 const updateBranches = { stable: 'main', beta: 'beta' };
+const fireflyDiscordApplicationId = '1535771097595777104';
 let preparedUpdate = null;
 let primaryWindow = null;
 let nativePlaybackState = { playing: false, hasTrack: false, title: '', artist: '', album: '', durationSeconds: 0, positionSeconds: 0, artworkUrl: '' };
 let discordClient = null;
 let discordClientId = '';
-let discordConfig = { enabled: false, applicationId: '', showTrack: true, showAlbum: true, showPaused: true, timeDisplay: 'elapsed', shareArtwork: true, showButton: false, largeImageKey: '' };
+let discordConfig = { enabled: false, showTrack: true, showAlbum: true, showPaused: true, timeDisplay: 'elapsed', shareArtwork: true, showButton: false };
 let discordStatus = { status: 'disabled', error: '' };
 let discordReconnectTimer = null;
 let discordConnectionToken = 0;
@@ -91,14 +92,12 @@ function cleanDiscordConfig(value = {}) {
   const timeDisplay = ['off', 'elapsed', 'remaining'].includes(value.timeDisplay) ? value.timeDisplay : 'elapsed';
   return {
     enabled: Boolean(value.enabled),
-    applicationId: String(value.applicationId || '').trim().replace(/\D/g, '').slice(0, 22),
     showTrack: value.showTrack !== false,
     showAlbum: value.showAlbum !== false,
     showPaused: value.showPaused !== false,
     timeDisplay,
     shareArtwork: value.shareArtwork !== false,
-    showButton: Boolean(value.showButton),
-    largeImageKey: String(value.largeImageKey || '').trim().slice(0, 128)
+    showButton: Boolean(value.showButton)
   };
 }
 function sendDiscordStatus(status, error = '') {
@@ -122,7 +121,7 @@ function destroyDiscordClient(status = 'disabled') {
 }
 function scheduleDiscordReconnect() {
   clearDiscordReconnect();
-  if (!discordConfig.enabled || !/^\d{15,22}$/.test(discordConfig.applicationId)) return;
+  if (!discordConfig.enabled) return;
   discordReconnectTimer = setTimeout(() => connectDiscord(), 30000);
   discordReconnectTimer.unref?.();
 }
@@ -138,8 +137,8 @@ function discordActivity() {
   if (nativePlaybackState.playing && discordConfig.timeDisplay === 'elapsed') activity.startTimestamp = new Date(Date.now() - nativePlaybackState.positionSeconds * 1000);
   if (nativePlaybackState.playing && discordConfig.timeDisplay === 'remaining' && nativePlaybackState.durationSeconds > nativePlaybackState.positionSeconds) activity.endTimestamp = new Date(Date.now() + (nativePlaybackState.durationSeconds - nativePlaybackState.positionSeconds) * 1000);
   const externalArtwork = discordConfig.shareArtwork && /^https:\/\//i.test(nativePlaybackState.artworkUrl) ? nativePlaybackState.artworkUrl : '';
-  if (externalArtwork || discordConfig.largeImageKey) {
-    activity.largeImageKey = externalArtwork || discordConfig.largeImageKey;
+  if (externalArtwork) {
+    activity.largeImageKey = externalArtwork;
     activity.largeImageText = `${nativePlaybackState.album || title} · Firefly`.slice(0, 128);
   }
   if (discordConfig.showButton) activity.buttons = [{ label: 'Get Firefly', url: 'https://github.com/FennXWeb/firefly-music-player' }];
@@ -163,8 +162,7 @@ async function updateDiscordPresence(force = false) {
 async function connectDiscord(nextConfig) {
   if (nextConfig) discordConfig = cleanDiscordConfig(nextConfig);
   if (!discordConfig.enabled) return destroyDiscordClient('disabled');
-  if (!/^\d{15,22}$/.test(discordConfig.applicationId)) return destroyDiscordClient('needs-id');
-  if (discordClient && discordClientId === discordConfig.applicationId && discordStatus.status === 'connected') {
+  if (discordClient && discordClientId === fireflyDiscordApplicationId && discordStatus.status === 'connected') {
     await updateDiscordPresence(true);
     return discordStatus;
   }
@@ -172,7 +170,7 @@ async function connectDiscord(nextConfig) {
   const token = discordConnectionToken;
   const client = new DiscordRPC.Client({ transport: 'ipc' });
   discordClient = client;
-  discordClientId = discordConfig.applicationId;
+  discordClientId = fireflyDiscordApplicationId;
   const disconnect = () => {
     if (discordClient !== client || token !== discordConnectionToken) return;
     discordClient = null;
@@ -184,7 +182,7 @@ async function connectDiscord(nextConfig) {
   client.on('disconnected', disconnect);
   client.on('error', disconnect);
   try {
-    await client.login({ clientId: discordConfig.applicationId });
+    await client.login({ clientId: fireflyDiscordApplicationId });
     if (discordClient !== client || token !== discordConnectionToken) return discordStatus;
     sendDiscordStatus('connected');
     await updateDiscordPresence(true);
