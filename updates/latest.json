@@ -3,7 +3,7 @@
   "branch": "beta",
   "version": "0.1.32",
   "publishedAt": "2026-08-08T22:17:39.2152217Z",
-  "notes": "Replaces the broken GIPHY page scraper with its live JSON result feed, dynamically discovers the current frontend search credential, and runs separate exact artist, singer, and band queries with cross-query deduplication for up to 24 distinct GIPHY options. Removes animated-GIF badges from artist portraits and lookup cards, removes the Personalized Locally home badge, and increases the animated result capacity so other sources remain visible.",
+  "notes": "Replaces folder-based cloud connections with Firefly Accounts: secure email or phone sign-in by password or one-time code, passkeys, encrypted desktop sessions, opt-in cross-PC backup and restore, and a 150 MB per-account quota. Sync covers music files, playlists, metadata, settings, artwork, favorites, and listening history. Includes the deployable Hostinger-compatible Node.js/MySQL account service as a separate beta release asset.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.32/Firefly-0.1.32-Setup.exe",
   "sha256": "616D998AC8F00554419C150267AAA4546F943F23B620A736F36843A0CDA3AAFE"
 }

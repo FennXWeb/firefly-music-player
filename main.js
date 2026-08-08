@@ -26,6 +26,7 @@ const artistArtDirectory = path.join(dataDirectory, 'artist-art');
 const sunoDirectory = path.join(dataDirectory, 'suno');
 const updatesDirectory = path.join(dataDirectory, 'updates');
 const zipImportDirectory = path.join(dataDirectory, 'zip-imports');
+const cloudCacheDirectory = path.join(dataDirectory, 'cloud-library');
 const apiPassBaseUrl = 'https://api.apipass.dev';
 const updateRepository = 'FennXWeb/firefly-music-player';
 const updateBranches = { stable: 'main', beta: 'beta' };
@@ -41,6 +42,9 @@ let discordConnectionToken = 0;
 let lastDiscordActivity = '';
 const liveFolderWatchers = new Map();
 const liveEntryCache = new Map();
+let cloudSyncTimer = null;
+let cloudSyncInFlight = false;
+let pendingCloudState = null;
 
 const taskbarIconData = {
   previous: 'iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAS0lEQVR4nO3POwoAMAhEQe9/6U2VRvCzKoSAr14GFdmYACAc3DLYCAhVGdRQC7QwGvQgGsz2Dhx/OXt5CfTQMmjBbVBvox3VOPhnB5a2xkg1hCLdAAAAAElFTkSuQmCC',
@@ -235,6 +239,130 @@ async function writeBufferAtomic(filePath, value) {
     await fs.rm(filePath, { force: true });
     await fs.rename(temporaryPath, filePath);
   });
+}
+function normalizedAccountEndpoint(value = '') {
+  try {
+    const url = new URL(String(value).trim());
+    if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))) return '';
+    return url.origin;
+  } catch { return ''; }
+}
+async function accountCredentials() {
+  const saved = await readJson(credentialsPath, {});
+  return { token: decryptSecret(saved.accountToken), endpoint: decryptSecret(saved.accountEndpoint) };
+}
+async function updateAccountCredentials({ token, endpoint } = {}) {
+  const saved = await readJson(credentialsPath, {});
+  if (token !== undefined) saved.accountToken = encryptSecret(token);
+  if (endpoint !== undefined) saved.accountEndpoint = encryptSecret(normalizedAccountEndpoint(endpoint));
+  await writeJsonAtomic(credentialsPath, saved);
+}
+async function accountRequest(resource, options = {}) {
+  const stored = await accountCredentials(), endpoint = normalizedAccountEndpoint(options.endpoint || stored.endpoint);
+  const token = options.token ?? stored.token;
+  if (!endpoint) throw new Error('Set the Firefly account server address first.');
+  const { endpoint: _endpoint, token: _token, headers: requestedHeaders, ...requestOptions } = options;
+  const headers = { Accept: 'application/json', 'User-Agent': `Firefly/${app.getVersion()}`, ...(requestedHeaders || {}) };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await net.fetch(`${endpoint}${resource}`, { ...requestOptions, headers });
+  if (!response.ok) {
+    let detail = '';
+    try { detail = String((await response.json())?.error || ''); } catch { /* Use the HTTP status below. */ }
+    const error = new Error(detail || `Account server returned ${response.status}.`);error.status = response.status;throw error;
+  }
+  return response;
+}
+async function accountStatus(endpoint) {
+  if (endpoint) await updateAccountCredentials({ endpoint });
+  const stored = await accountCredentials();
+  if (!stored.token || !normalizedAccountEndpoint(stored.endpoint)) return { signedIn: false, configured: Boolean(normalizedAccountEndpoint(stored.endpoint)), endpoint: normalizedAccountEndpoint(stored.endpoint) };
+  try {
+    const response = await accountRequest('/v1/me');
+    return { signedIn: true, configured: true, endpoint: normalizedAccountEndpoint(stored.endpoint), ...(await response.json()) };
+  } catch (error) {
+    if (error.status === 401) { await updateAccountCredentials({ token: '' });return { signedIn: false, configured: true, expired: true, endpoint: normalizedAccountEndpoint(stored.endpoint) }; }
+    return { signedIn: false, configured: true, offline: true, error: error.message, endpoint: normalizedAccountEndpoint(stored.endpoint) };
+  }
+}
+async function uploadCloudObject(filePath, endpoint, token) {
+  const stats = await fs.stat(filePath);if (!stats.isFile()) return null;
+  const hash = await new Promise((resolve, reject) => {const digest=crypto.createHash('sha256'),stream=fsNative.createReadStream(filePath);stream.on('data',chunk=>digest.update(chunk));stream.on('error',reject);stream.on('end',()=>resolve(digest.digest('hex')))});
+  const name = path.basename(filePath).slice(0, 180), encodedName = Buffer.from(name, 'utf8').toString('base64url');
+  const existing = await accountRequest(`/v1/sync/objects/${hash}`, { method: 'HEAD', endpoint, token }).catch(error => error.status === 404 ? null : Promise.reject(error));
+  if (!existing) {
+    const body = await fs.readFile(filePath);
+    await accountRequest(`/v1/sync/objects/${hash}`, { method: 'PUT', endpoint, token, body, headers: { 'Content-Type': 'application/octet-stream', 'X-Firefly-Filename': encodedName } });
+  }
+  return { hash, name, size: stats.size };
+}
+async function embedPortableFiles(value, key = '') {
+  if (Array.isArray(value)) return Promise.all(value.map(item => embedPortableFiles(item, key)));
+  if (value && typeof value === 'object') {for (const [childKey, child] of Object.entries(value)) value[childKey] = await embedPortableFiles(child, childKey);return value}
+  if (typeof value !== 'string') return value;
+  if (key === 'path' || /(?:sourcePath|backgroundPath|audioPath)$/i.test(key)) return null;
+  if (!value.startsWith('file:')) return value;
+  try {
+    const filePath=fileURLToPath(value),stats=await fs.stat(filePath);if(!stats.isFile()||stats.size>50*1024*1024)return null;
+    const extension=path.extname(filePath).toLowerCase(),mime=({'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.gif':'image/gif','.bmp':'image/bmp','.mp4':'video/mp4','.webm':'video/webm'}[extension]||'application/octet-stream');
+    return `data:${mime};base64,${(await fs.readFile(filePath)).toString('base64')}`;
+  } catch { return null; }
+}
+async function portableCloudState(state, endpoint, token) {
+  const portable = JSON.parse(JSON.stringify(state || {}));
+  portable.liveFolders = [];
+  const sourceTracks = new Map((state?.albums || []).flatMap(album => (album.tracks || []).map(track => [track.id, track])));
+  for (const album of portable.albums || []) for (const track of album.tracks || []) {
+    const original = sourceTracks.get(track.id), filePath = String(original?.path || '');
+    track.path = null;track.url = null;delete track.liveFolderId;delete track.cloudSourceId;
+    if (!filePath) continue;
+    try { track.cloudFile = await uploadCloudObject(filePath, endpoint, token); }
+    catch (error) { if (error.status === 413) throw error;track.cloudFileUnavailable = true; }
+  }
+  await embedPortableFiles(portable);
+  portable.cloudSnapshot = { createdAt: new Date().toISOString(), appVersion: app.getVersion() };
+  return portable;
+}
+async function uploadCloudSnapshot(state, { manual = false } = {}) {
+  if (cloudSyncInFlight) { pendingCloudState = state;return { queued: true }; }
+  const endpoint = normalizedAccountEndpoint(state?.settings?.cloudServerUrl), enabled = Boolean(state?.settings?.cloudSyncEnabled);
+  const { token } = await accountCredentials();
+  if (!enabled || !endpoint || !token) return { skipped: true };
+  cloudSyncInFlight = true;
+  try {
+    const portable = await portableCloudState(state, endpoint, token);
+    const response = await accountRequest('/v1/sync/snapshot', { method: 'PUT', endpoint, token, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ state: portable, deviceName: process.env.COMPUTERNAME || 'Windows PC' }) });
+    const result = await response.json();
+    primaryWindow?.webContents?.send('account:sync-status', { status: 'synced', ...result });
+    return result;
+  } catch (error) {
+    primaryWindow?.webContents?.send('account:sync-status', { status: 'error', error: error.message });
+    if (manual) throw error;
+    return { error: error.message };
+  } finally {
+    cloudSyncInFlight = false;
+    if (pendingCloudState) { const next = pendingCloudState;pendingCloudState = null;scheduleCloudBackup(next, 500); }
+  }
+}
+function scheduleCloudBackup(state, delay = 3500) {
+  clearTimeout(cloudSyncTimer);cloudSyncTimer = setTimeout(() => uploadCloudSnapshot(state), delay);cloudSyncTimer.unref?.();
+}
+async function downloadCloudSnapshot(endpoint) {
+  const stored = await accountCredentials(), base = normalizedAccountEndpoint(endpoint || stored.endpoint);
+  const response = await accountRequest('/v1/sync/snapshot', { endpoint: base, token: stored.token });
+  if (response.status === 204) return null;
+  const payload = await response.json(), state = payload.state;
+  await fs.mkdir(cloudCacheDirectory, { recursive: true });
+  for (const album of state?.albums || []) for (const track of album.tracks || []) {
+    if (!track.cloudFile?.hash) continue;
+    const stem = `${track.cloudFile.hash.slice(0,16)}-${safeFileStem(track.cloudFile.name || `${track.id}.audio`)}`, destination = path.join(cloudCacheDirectory, stem);
+    try { await fs.stat(destination); }
+    catch {
+      const asset = await accountRequest(`/v1/sync/objects/${track.cloudFile.hash}`, { endpoint: base, token: stored.token, headers: { Accept: 'application/octet-stream' } });
+      await writeBufferAtomic(destination, Buffer.from(await asset.arrayBuffer()));
+    }
+    track.path = destination;track.url = pathToFileURL(destination).href;
+  }
+  return { ...payload, state };
 }
 function compareVersions(left='',right='') {
   const parse=value=>{const [core,pre='']=String(value).trim().replace(/^v/i,'').split('-',2);return{core:core.split('.').map(part=>Number(part)||0),pre}};
@@ -710,7 +838,7 @@ async function scanFolder(root, options = {}) {
       if (item.isDirectory()) await walk(fullPath);
       else if (audioExtensions.has(path.extname(item.name).toLowerCase()) || imageExtensions.has(path.extname(item.name).toLowerCase())) {
         if (!options.live) { results.push(await entryFor(fullPath, root));continue; }
-        const stats=await fs.stat(fullPath),cacheKey=path.normalize(fullPath).toLowerCase(),cached=liveEntryCache.get(cacheKey),retryFailedMetadata=options.cloud&&cached?.entry?.kind==='audio'&&cached.entry.metadataError&&Date.now()-(cached.checkedAt||0)>5*60*1000;
+        const stats=await fs.stat(fullPath),cacheKey=path.normalize(fullPath).toLowerCase(),cached=liveEntryCache.get(cacheKey),retryFailedMetadata=cached?.entry?.kind==='audio'&&cached.entry.metadataError&&Date.now()-(cached.checkedAt||0)>5*60*1000;
         let entry;
         if(cached&&cached.modifiedAt===stats.mtimeMs&&cached.size===stats.size&&!retryFailedMetadata)entry={...cached.entry};
         else{entry=await entryFor(fullPath,root);entry.modifiedAt=stats.mtimeMs;entry.size=stats.size;liveEntryCache.set(cacheKey,{modifiedAt:stats.mtimeMs,size:stats.size,checkedAt:Date.now(),entry})}
@@ -722,31 +850,16 @@ async function scanFolder(root, options = {}) {
   return results;
 }
 
-function detectCloudProvider(root=''){
-  const value=path.normalize(String(root)).toLowerCase();
-  if(value.includes('onedrive'))return'OneDrive';
-  if(value.includes('dropbox'))return'Dropbox';
-  if(value.includes('google drive')||value.includes('googledrive')||value.includes('drivefs'))return'Google Drive';
-  if(value.includes('icloud'))return'iCloud Drive';
-  if(value.includes('nextcloud'))return'Nextcloud';
-  if(value.includes('pcloud'))return'pCloud';
-  if(value.includes('mega'))return'MEGA';
-  if(value.includes('box'))return'Box';
-  if(value.includes('syncthing'))return'Syncthing';
-  if(value.startsWith('\\\\'))return'Network cloud';
-  return'Cloud storage';
-}
-function liveFolderId(root='',kind='live'){return`${kind==='cloud'?'cloud':'live'}-${crypto.createHash('sha1').update(path.normalize(root).toLowerCase()).digest('hex').slice(0,16)}`}
+function liveFolderId(root=''){return`live-${crypto.createHash('sha1').update(path.normalize(root).toLowerCase()).digest('hex').slice(0,16)}`}
 function normalizedLiveFolder(folder={}){
   const root=path.resolve(String(folder.path||folder.root||''));
-  const kind=folder.kind==='cloud'?'cloud':'live',provider=kind==='cloud'?String(folder.provider||detectCloudProvider(root)):'';
-  return{id:String(folder.id||liveFolderId(root,kind)),path:root,name:String(folder.name||path.basename(root)||(kind==='cloud'?'Cloud music':'Live folder')),kind,provider,addedAt:Number(folder.addedAt)||Date.now()};
+  return{id:String(folder.id||liveFolderId(root)),path:root,name:String(folder.name||path.basename(root)||'Live folder'),kind:'live',addedAt:Number(folder.addedAt)||Date.now()};
 }
 async function liveFolderSnapshot(folder={}){
   const normalized=normalizedLiveFolder(folder),scannedAt=Date.now();
   try{
     const stats=await fs.stat(normalized.path);if(!stats.isDirectory())throw new Error('The saved path is not a folder.');
-    const entries=await scanFolder(normalized.path,{live:true,cloud:normalized.kind==='cloud'});
+    const entries=await scanFolder(normalized.path,{live:true});
     entries.forEach(entry=>{entry.liveFolderId=normalized.id;entry.liveTrackId=`live-track-${crypto.createHash('sha1').update(`${normalized.id}\0${String(entry.relativePath||entry.name).toLowerCase()}`).digest('hex').slice(0,20)}`});
     const audioEntries=entries.filter(entry=>entry.kind==='audio');
     return{ok:true,folder:{...normalized,status:'synced',lastSyncedAt:scannedAt,trackCount:audioEntries.length,metadataPending:audioEntries.filter(entry=>entry.metadataError).length},entries,scannedAt};
@@ -860,6 +973,7 @@ app.whenReady().then(() => {
   }));
   ipcMain.handle('state:save', async (_event, state) => {
     await writeJsonAtomic(statePath, { ...state, schemaVersion: 3, savedAt: new Date().toISOString() });
+    scheduleCloudBackup(state);
     return true;
   });
   ipcMain.handle('credentials:load', async () => {
@@ -870,10 +984,8 @@ app.whenReady().then(() => {
     };
   });
   ipcMain.handle('credentials:save', async (_event, credentials) => {
-    await writeJsonAtomic(credentialsPath, {
-      openaiKey: encryptSecret(credentials?.openaiKey),
-      sunoToken: encryptSecret(credentials?.sunoToken)
-    });
+    const saved = await readJson(credentialsPath, {});
+    await writeJsonAtomic(credentialsPath, { ...saved, openaiKey: encryptSecret(credentials?.openaiKey), sunoToken: encryptSecret(credentials?.sunoToken) });
     return true;
   });
   ipcMain.handle('state:open-directory', async () => {
@@ -902,6 +1014,24 @@ app.whenReady().then(() => {
     if (win && !win.isDestroyed()) primaryWindow = win;
     return connectDiscord(config);
   });
+  ipcMain.handle('account:status', async (_event, endpoint) => accountStatus(endpoint));
+  ipcMain.handle('account:open', async (_event, options = {}) => {
+    const endpoint = normalizedAccountEndpoint(options.endpoint);if (!endpoint) throw new Error('Enter the HTTPS address for your Firefly account server.');
+    await updateAccountCredentials({ endpoint });
+    const mode = ['signin','signup','passkeys'].includes(options.mode) ? options.mode : 'signin';
+    await shell.openExternal(`${endpoint}/account?desktop=1&mode=${mode}`);return true;
+  });
+  ipcMain.handle('account:claim', async (_event, options = {}) => {
+    const endpoint = normalizedAccountEndpoint(options.endpoint), code = String(options.code || '').trim();
+    if (!endpoint || !/^[A-Za-z0-9_-]{24,80}$/.test(code)) throw new Error('Enter the connection code shown in your browser.');
+    const response = await accountRequest('/v1/desktop/claim', { method: 'POST', endpoint, token: '', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, deviceName: process.env.COMPUTERNAME || 'Windows PC' }) });
+    const result = await response.json();await updateAccountCredentials({ endpoint, token: result.token });
+    let cloud = null;try { cloud = await downloadCloudSnapshot(endpoint); } catch (error) { if (error.status !== 404) result.syncError = error.message; }
+    return { account: await accountStatus(endpoint), cloud };
+  });
+  ipcMain.handle('account:sign-out', async () => {try{await accountRequest('/v1/desktop/session',{method:'DELETE'})}catch{/* Always remove the local credential, even while offline. */}await updateAccountCredentials({ token: '' });return true});
+  ipcMain.handle('account:sync-now', async (_event, state) => uploadCloudSnapshot(state, { manual: true }));
+  ipcMain.handle('account:restore', async (_event, endpoint) => downloadCloudSnapshot(endpoint));
   ipcMain.handle('library:choose-files', async () => {
     const result = await dialog.showOpenDialog({
       title: 'Import music',
@@ -920,12 +1050,6 @@ app.whenReady().then(() => {
     const result=await dialog.showOpenDialog({title:'Add a live music folder',properties:['openDirectory']});
     if(result.canceled||!result.filePaths[0])return null;
     const folder=normalizedLiveFolder({path:result.filePaths[0],addedAt:Date.now()});registerLiveFolder(folder,event.sender);return liveFolderSnapshot(folder);
-  });
-  ipcMain.handle('library:add-cloud-source', async event => {
-    const result=await dialog.showOpenDialog({title:'Link a cloud-synced music folder',buttonLabel:'Link cloud folder',properties:['openDirectory'],message:'Choose a folder inside OneDrive, Dropbox, Google Drive, iCloud Drive, or another locally synced cloud provider.'});
-    if(result.canceled||!result.filePaths[0])return null;
-    const root=result.filePaths[0],folder=normalizedLiveFolder({path:root,name:path.basename(root),kind:'cloud',provider:detectCloudProvider(root),addedAt:Date.now()});
-    registerLiveFolder(folder,event.sender);return liveFolderSnapshot(folder);
   });
   ipcMain.handle('library:sync-live-folders', async (event, folders) => syncLiveFolders(folders,event.sender));
   ipcMain.handle('library:rescan-live-folder', async (event, folder) => {const record=registerLiveFolder(folder,event.sender);return liveFolderSnapshot(record.folder)});
@@ -956,5 +1080,5 @@ app.whenReady().then(() => {
   createWindow();
   app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow());
 });
-app.on('before-quit',()=>{destroyDiscordClient('disabled');for(const accelerator of mediaAccelerators.keys())globalShortcut.unregister(accelerator);for(const id of [...liveFolderWatchers.keys()])closeLiveFolderWatcher(id)});
+app.on('before-quit',()=>{clearTimeout(cloudSyncTimer);destroyDiscordClient('disabled');for(const accelerator of mediaAccelerators.keys())globalShortcut.unregister(accelerator);for(const id of [...liveFolderWatchers.keys()])closeLiveFolderWatcher(id)});
 app.on('window-all-closed', () => process.platform !== 'darwin' && app.quit());

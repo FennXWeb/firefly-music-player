@@ -31,10 +31,13 @@ jobs:
           $version = (Get-Content package.json | ConvertFrom-Json).version
           $installer = "Firefly-$version-Setup.exe"
           $portable = "Firefly-$version-Portable.exe"
+          $cloudServer = "Firefly-Cloud-Server-$version.zip"
+          tar -a -cf "release/$cloudServer" -C cloud-server package.json package-lock.json .env.example README.md schema.sql src web public
           $hash = (Get-FileHash "release/$installer" -Algorithm SHA256).Hash
           "version=$version" >> $env:GITHUB_OUTPUT
           "installer=$installer" >> $env:GITHUB_OUTPUT
           "portable=$portable" >> $env:GITHUB_OUTPUT
+          "cloudServer=$cloudServer" >> $env:GITHUB_OUTPUT
           "sha256=$hash" >> $env:GITHUB_OUTPUT
       - uses: actions/upload-artifact@v4
         with:
@@ -42,6 +45,7 @@ jobs:
           path: |
             release/${{ steps.build.outputs.installer }}
             release/${{ steps.build.outputs.portable }}
+            release/${{ steps.build.outputs.cloudServer }}
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: beta-v${{ steps.build.outputs.version }}
@@ -52,6 +56,7 @@ jobs:
           files: |
             release/${{ steps.build.outputs.installer }}
             release/${{ steps.build.outputs.portable }}
+            release/${{ steps.build.outputs.cloudServer }}
       - name: Publish beta updater manifest
         shell: pwsh
         run: |

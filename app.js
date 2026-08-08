@@ -21,7 +21,8 @@ const defaultSettings = {
   muted: false, shuffle: false, repeatMode: 'off', songSort: 'added-desc', albumView:'grid', albumFilter:'all', playlistDefaultSort:'manual', confirmDeletes:true, showPendingTracks:true, dynamicArtByDefault: false,
   onlineMetadata:true, onlineLyrics:true, onlineArtistImages:true, onlineMusicVideos:true,
   sunoEndpoint: 'https://api.apipass.dev', sunoModel: 'V5_5', sunoChannel: 'auto', updateChannel: 'stable', visualizerStyle:'waves',
-  discordRichPresence:false, discordApplicationId:'', discordShowTrack:true, discordShowAlbum:true, discordShowPaused:true, discordTimeDisplay:'elapsed', discordShareArtwork:true, discordShowButton:false, discordLargeImageKey:''
+  discordRichPresence:false, discordApplicationId:'', discordShowTrack:true, discordShowAlbum:true, discordShowPaused:true, discordTimeDisplay:'elapsed', discordShareArtwork:true, discordShowButton:false, discordLargeImageKey:'',
+  cloudSyncEnabled:false, cloudServerUrl:''
 };
 let settings = { ...defaultSettings };
 let credentials = { openaiKey: '', sunoToken: '' };
@@ -74,6 +75,9 @@ let renderedLibraryRevision = 0;
 let dynamicViewRefreshTimer = null;
 let discordPresenceState = { status:'disabled', error:'' };
 let lastDiscordProgressSync = 0;
+let accountState = { signedIn:false, configured:false, status:'idle', storageUsed:0, storageLimit:150*1024*1024 };
+let accountSyncState = { status:'idle' };
+let localStateSavedAt = 0;
 const VIDEO_RECHECK_MS = 14 * 24 * 60 * 60 * 1000;
 
 const view = $('#view');
@@ -166,11 +170,13 @@ function runBulkAction(action){
   if(action==='playlist'){addBulkSelectionToPlaylist();return}
   if(action==='delete')deleteBulkSelection();
 }
+function currentLibraryState(){return { albums, playlists:customPlaylists, shelves, artistProfiles, sunoConnected, sunoJobs, playHistory, liveFolders, settings }}
 function saveLibrary() {
   pruneEmptyAlbums();
   syncShelves();
   libraryRevision++;
-  const state = { albums, playlists:customPlaylists, shelves, artistProfiles, sunoConnected, sunoJobs, playHistory, liveFolders, settings };
+  localStateSavedAt=Date.now();
+  const state = currentLibraryState();
   try { localStorage.setItem('firefly-library-v1', JSON.stringify(state)); }
   catch { toast('Library is too large to cache','Your current session is safe, but large uploaded artwork may not persist.'); }
   if (persistenceReady && window.firefly?.saveState) {
@@ -208,7 +214,7 @@ function applySavedState(saved = {}) {
   if (saved.artistProfiles && typeof saved.artistProfiles === 'object' && !Array.isArray(saved.artistProfiles)) artistProfiles = saved.artistProfiles;
   if (Array.isArray(saved.sunoJobs)) sunoJobs = saved.sunoJobs;
   if (Array.isArray(saved.playHistory)) playHistory = saved.playHistory.filter(event=>event&&typeof event.trackId==='string'&&Number.isFinite(Number(event.playedAt))).slice(-2500);
-  if (Array.isArray(saved.liveFolders)) liveFolders = saved.liveFolders.filter(folder=>folder&&typeof folder.id==='string'&&typeof folder.path==='string').map(folder=>({...folder,status:folder.status||'pending'}));
+  if (Array.isArray(saved.liveFolders)) liveFolders = saved.liveFolders.filter(folder=>folder&&folder.kind!=='cloud'&&typeof folder.id==='string'&&typeof folder.path==='string').map(folder=>({...folder,kind:'live',status:folder.status||'pending'}));
   sunoConnected = Boolean(saved.sunoConnected);
   settings = { ...defaultSettings, ...(saved.settings || {}) };
   settings.sunoEndpoint = defaultSettings.sunoEndpoint;
@@ -252,6 +258,7 @@ async function initializePersistence() {
     try {
       const loaded = await window.firefly.loadState();
       durableState = loaded?.state;
+      localStateSavedAt=Date.parse(durableState?.savedAt||'')||0;
       dataDirectory = loaded?.dataDirectory || '';
       credentials = { ...credentials, ...(await window.firefly.loadCredentials()) };
     } catch { /* The browser fallback continues to use local storage. */ }
@@ -275,6 +282,20 @@ async function initializePersistence() {
   initializeUpdater();
   initializeSunoPolling();
   configureDiscordPresence();
+  initializeAccount();
+}
+function formatStorage(bytes=0){const value=Math.max(0,Number(bytes)||0);return value>=1024*1024?`${(value/1024/1024).toFixed(value>=100*1024*1024?0:1)} MB`:`${Math.ceil(value/1024)} KB`}
+function applyCloudState(payload,{notify=true}={}){
+  const cloud=payload?.state;if(!cloud)return false;
+  const localFolders=liveFolders,serverUrl=settings.cloudServerUrl,syncEnabled=settings.cloudSyncEnabled;
+  applySavedState(cloud);liveFolders=localFolders;settings.cloudServerUrl=serverUrl;settings.cloudSyncEnabled=syncEnabled;pruneEmptyAlbums();syncShelves();applySettings();saveLibrary();render();
+  if(notify)toast('Cloud library restored',`${allTracks().length} tracks and ${customPlaylists.length} playlists are ready on this PC.`);return true;
+}
+async function initializeAccount(){
+  if(!window.firefly?.getAccountStatus)return;
+  try{const status=await window.firefly.getAccountStatus(settings.cloudServerUrl);accountState={...accountState,...status,status:'ready'};if(!settings.cloudServerUrl&&status.endpoint)settings.cloudServerUrl=status.endpoint;if(status.signedIn&&settings.cloudSyncEnabled){const payload=await window.firefly.restoreAccountCloud(settings.cloudServerUrl).catch(()=>null),cloudTime=Date.parse(payload?.syncedAt||payload?.state?.cloudSnapshot?.createdAt||'')||0;if(payload&&cloudTime>localStateSavedAt)applyCloudState(payload,{notify:false});else if(localStateSavedAt>cloudTime+1000)window.firefly.syncAccountNow(currentLibraryState()).catch(()=>{})}}
+  catch(error){accountState={...accountState,status:'offline',error:error.message}}
+  if(currentView==='settings'&&settingsTab==='account')renderSettings();
 }
 function toast(title, detail = '') {
   const el = document.createElement('div');
@@ -909,6 +930,31 @@ async function configureDiscordPresence(notify=false){
   if(notify){const [,title,detail]=discordStatusCopy();toast(title,detail)}
 }
 function discordSettingsMarkup(){return `<div class="settings-section discord-settings-section"><div class="settings-section-heading"><span><small class="discord-kicker">DISCORD</small><h3>Rich Presence</h3></span><a class="ghost discord-portal-link" href="https://discord.com/developers/applications" target="_blank" rel="noreferrer">Developer Portal ↗</a></div>${settingToggle('discordRichPresence','Share listening activity','Show the current track, artist, album, and playback state on your Discord profile')}<div class="setting-row"><div><b>Application ID</b><small>Create an app in Discord’s Developer Portal and copy its numeric Application ID</small></div><input id="discordApplicationId" type="text" inputmode="numeric" value="${esc(settings.discordApplicationId)}" placeholder="Required to connect" autocomplete="off" spellcheck="false"></div>${settingToggle('discordShowTrack','Show track title','Share the title of the song that is playing')}${settingToggle('discordShowAlbum','Show album name','Include the album alongside the artist')}${settingToggle('discordShowPaused','Show paused status','Keep Rich Presence visible while playback is paused')}${settingSelect('discordTimeDisplay','Playback timer','Choose whether Discord shows elapsed or remaining time',[['elapsed','Elapsed time'],['remaining','Time remaining'],['off','Hidden']])}${settingToggle('discordShareArtwork','Share online album artwork','Use HTTPS cover artwork when Discord supports the source')}${settingToggle('discordShowButton','Show Firefly button','Add a button linking friends to the Firefly project')}<div class="setting-row"><div><b>Fallback artwork asset</b><small>Optional asset key uploaded under Rich Presence → Art Assets (for example, firefly)</small></div><input id="discordLargeImageKey" type="text" value="${esc(settings.discordLargeImageKey)}" placeholder="Optional asset key" autocomplete="off" spellcheck="false"></div><div class="setting-row discord-status-row"><div id="discordPresenceStatus" class="discord-presence-status"><i></i><span><b>Status</b><small>Checking the connection…</small></span></div><button class="ghost" id="reconnectDiscord">Reconnect</button></div></div>`}
+function accountIdentity(){const user=accountState.user||{};return user.email&&!String(user.email).endsWith('@phone.firefly.invalid')?user.email:user.phoneNumber||user.name||'Firefly listener'}
+function accountSettingsMarkup(){
+  const used=Number(accountState.storageUsed)||0,limit=Number(accountState.storageLimit)||150*1024*1024,percent=Math.min(100,used/Math.max(1,limit)*100),identity=accountIdentity();
+  if(!accountState.signedIn)return `<header class="account-settings-header"><span class="eyebrow">FIREFLY ACCOUNT</span><h2>Your library, wherever you listen</h2><p>Sign in securely with email, phone, password, a one-time code, or a passkey.</p></header><div class="settings-section account-intro-section"><div class="account-orbit"><i></i><i></i><i></i><span>${icon('spark')}</span></div><h3>One private home for Firefly</h3><p>Playlists, library metadata, settings, artwork, listening history, and available music files can follow your account. Cloud backup stays off until you enable it.</p><div class="account-actions"><button class="primary" id="accountSignIn">Sign in</button><button class="ghost" id="accountCreate">Create account</button></div></div><div class="settings-section"><h3>Connect this app</h3><div class="setting-row"><div><b>Account server</b><small>Your private HTTPS Firefly account service</small></div><input id="cloudServerUrl" type="url" value="${esc(settings.cloudServerUrl)}" placeholder="https://accounts.yourdomain.com" autocomplete="url"></div><div class="setting-row"><div><b>Browser connection code</b><small>After signing in securely in your browser, paste the short-lived code here</small></div><span class="account-code-entry"><input id="accountConnectionCode" type="text" placeholder="Paste code" autocomplete="one-time-code"><button class="ghost" id="accountClaimCode">Connect</button></span></div></div>`;
+  return `<header class="account-settings-header signed-in"><span class="eyebrow">FIREFLY ACCOUNT</span><h2>${esc(accountState.user?.name||'Your cloud library')}</h2><p>${esc(identity)} · connected securely</p></header><div class="settings-section"><div class="account-profile-row"><span class="account-avatar">${esc((accountState.user?.name||identity).slice(0,1).toUpperCase())}</span><span><b>${esc(accountState.user?.name||identity)}</b><small>${esc(identity)}</small></span><button class="ghost" id="accountManagePasskeys">Manage passkeys ↗</button></div>${settingToggle('cloudSyncEnabled','Cloud backup & sync','Back up Firefly data and download the newest library after signing in on another PC')}<div class="account-storage"><span><b>${formatStorage(used)} used</b><small>${formatStorage(limit)} included with this account</small></span><em>${Math.round(percent)}%</em><i><u style="width:${percent}%"></u></i></div><div class="setting-row"><div><b>Sync status</b><small>${accountSyncState.status==='syncing'?'Uploading changes securely…':accountSyncState.status==='error'?esc(accountSyncState.error||'Sync could not finish'):accountSyncState.status==='synced'?`Protected backup updated${accountSyncState.syncedAt?` · ${new Date(accountSyncState.syncedAt).toLocaleString()}`:''}`:settings.cloudSyncEnabled?'Changes sync automatically in the background':'Cloud sync is disabled'}</small></div><span class="account-sync-actions"><button class="ghost" id="accountRestore">Download cloud copy</button><button class="primary" id="accountSyncNow" ${settings.cloudSyncEnabled?'':'disabled'}>Sync now</button></span></div><div class="setting-row"><div><b>Sign out on this PC</b><small>Local music and settings stay on this computer</small></div><button class="ghost danger" id="accountSignOut">Sign out</button></div></div>`;
+}
+async function openAccountPortal(mode='signin'){
+  const endpoint=settings.cloudServerUrl.trim();if(!endpoint){toast('Add your account server first','Enter its HTTPS address below.');$('#cloudServerUrl')?.focus();return}
+  try{await window.firefly.openAccountPortal({endpoint,mode});toast('Continue in your browser',mode==='passkeys'?'Add or remove passkeys, then return to Firefly.':'Choose email, phone, password, one-time code, or passkey.')}
+  catch(error){toast('Could not open account portal',error.message)}
+}
+async function claimAccountConnection(){
+  const input=$('#accountConnectionCode'),code=input?.value.trim();if(!code){input?.focus();toast('Paste the browser connection code');return}
+  const button=$('#accountClaimCode');button.disabled=true;button.textContent='Connecting…';
+  try{const result=await window.firefly.claimAccountCode({endpoint:settings.cloudServerUrl,code});accountState={...accountState,...result.account,status:'ready'};if(result.cloud)applyCloudState(result.cloud,{notify:false});saveLibrary();renderSettings();toast('Firefly account connected',result.cloud?'Your cloud library has been downloaded.':'Cloud backup is ready when you enable it.')}
+  catch(error){button.disabled=false;button.textContent='Connect';toast('Could not connect account',error.message)}
+}
+async function syncAccountNow(){
+  accountSyncState={status:'syncing'};renderSettings();
+  try{const result=await window.firefly.syncAccountNow(currentLibraryState());accountSyncState={status:'synced',...result};accountState.storageUsed=Number(result.storageUsed)||accountState.storageUsed;accountState.storageLimit=Number(result.storageLimit)||accountState.storageLimit;renderSettings();toast('Cloud backup updated',`${formatStorage(accountState.storageUsed)} of ${formatStorage(accountState.storageLimit)} used.`)}
+  catch(error){accountSyncState={status:'error',error:error.message};renderSettings();toast('Cloud sync failed',error.message)}
+}
+async function restoreAccountCloud(){
+  try{const payload=await window.firefly.restoreAccountCloud(settings.cloudServerUrl);if(!payload){toast('No cloud backup yet');return}applyCloudState(payload)}catch(error){toast('Could not download cloud library',error.message)}
+}
 function updateStatusText(){return updateState.status==='available'?`Version ${esc(updateState.version)} is available`:updateState.status==='error'?esc(updateState.error||'Update check failed'):updateState.status==='checking'?'Checking GitHub now…':updateState.status==='downloading'?'Downloading in the background…':updateState.status==='installing'?'Verifying and preparing…':updateState.status==='ready'?'Ready · restart to apply':'Firefly checks when it opens and every 30 minutes'}
 function settingsPanelMarkup(tab){
   if(tab==='appearance')return `<header><span class="eyebrow">APPEARANCE</span><h2>Shape the entire interface</h2><p>Color, scale, spacing, surfaces, and motion update immediately.</p></header>
@@ -919,17 +965,18 @@ function settingsPanelMarkup(tab){
     <div class="settings-section"><h3>Queue behavior</h3>${settingToggle('autoplayNext','Automatically play next','Advance through the active album, artist, or playlist')}${settingToggle('stopAfterCurrent','Stop after current track','A one-time sleep timer that turns itself off after stopping')}${settingToggle('shuffle','Shuffle mode','Start newly selected collections in shuffled order')}${settingSelect('repeatMode','Repeat mode','Choose the persistent repeat behavior',[['off','Off'],['all','Repeat queue'],['one','Repeat current track']])}${settingSelect('visualizerStyle','Default visualizer','Opens fullscreen playback with this visual style',[['waves','Aurora waves'],['orbit','Pulse orbit'],['spectrum','Prism spectrum']])}</div>`;
   if(tab==='library')return `<header><span class="eyebrow">LIBRARY</span><h2>Organize imports and collections</h2><p>Choose default views, sorting, safeguards, and automatic artwork behavior.</p></header>
     <div class="settings-section"><h3>Default organization</h3>${settingSelect('songSort','Song-list sorting','Default order used on the Songs screen',[['plays-desc','Most played'],['plays-asc','Least played'],['added-desc','Last added'],['added-asc','First added'],['title-asc','Song A–Z'],['artist-asc','Artist A–Z']])}${settingSelect('albumView','Album presentation','Default layout for the Albums screen',[['grid','Artwork grid'],['list','Detailed list']])}${settingSelect('albumFilter','Album filter','The Albums screen remembers this collection filter',[['all','All albums'],['recent','Recently added'],['downloaded','Downloaded'],['favorites','Favorites']])}${settingSelect('playlistDefaultSort','New playlist sorting','Used until an individual playlist chooses another order',Object.entries(playlistSortLabels))}${settingToggle('showPendingTracks','Show pending tracks','Keep screenshot-import placeholders visible in playlist tables')}${settingToggle('confirmDeletes','Confirm destructive actions','Ask before removing tracks, albums, artists, playlists, or shelves')}</div>
-    <div class="settings-section"><h3>Imports & artwork</h3>${settingToggle('dynamicArtByDefault','Dynamic Case Art for new albums','Automatically extend imported covers into coordinated back and spine artwork')}<div class="setting-row cloud-sync-setting"><div><b>Cloud music sync</b><small>${cloudSources().length?`${cloudSources().length} linked source${cloudSources().length===1?'':'s'} · ${cloudSources().reduce((sum,folder)=>sum+(Number(folder.trackCount)||0),0)} cloud tracks`:'Link OneDrive, Dropbox, Google Drive, iCloud Drive, or another synced folder'}</small></div><button class="ghost" id="manageCloudSources">${cloudSources().length?'Manage cloud':'Link cloud storage'}</button></div><div class="setting-row"><div><b>Live folders</b><small>${localLiveFolders().length?`${localLiveFolders().length} watched folder${localLiveFolders().length===1?'':'s'} · ${localLiveFolders().reduce((sum,folder)=>sum+(Number(folder.trackCount)||0),0)} synced tracks`:'Continuously mirror local music folders into your library'}</small></div><button class="ghost" id="manageLiveFolders">${localLiveFolders().length?'Manage folders':'Add live folder'}</button></div><div class="setting-row"><div><b>Firefly data folder</b><small>${esc(dataDirectory||'Browser local storage')}</small></div><button class="ghost" id="openDataFolder" ${dataDirectory?'':'disabled'}>Open folder</button></div></div>`;
+    <div class="settings-section"><h3>Imports & artwork</h3>${settingToggle('dynamicArtByDefault','Dynamic Case Art for new albums','Automatically extend imported covers into coordinated back and spine artwork')}<div class="setting-row"><div><b>Live folders</b><small>${localLiveFolders().length?`${localLiveFolders().length} watched folder${localLiveFolders().length===1?'':'s'} · ${localLiveFolders().reduce((sum,folder)=>sum+(Number(folder.trackCount)||0),0)} synced tracks`:'Continuously mirror local music folders into your library'}</small></div><button class="ghost" id="manageLiveFolders">${localLiveFolders().length?'Manage folders':'Add live folder'}</button></div><div class="setting-row"><div><b>Firefly data folder</b><small>${esc(dataDirectory||'Browser local storage')}</small></div><button class="ghost" id="openDataFolder" ${dataDirectory?'':'disabled'}>Open folder</button></div></div>`;
   if(tab==='integrations')return `<header><span class="eyebrow">INTEGRATIONS</span><h2>Connected creative services</h2><p>Credentials are encrypted by Windows and stored outside the application installation.</p></header>
     <div class="settings-section"><h3>Creative tools</h3><div class="setting-row"><div><b>OpenAI API key</b><small>Used only for AI video and Dynamic Case Art generation</small></div><input id="openaiKey" type="password" value="${esc(credentials.openaiKey)}" placeholder="Not connected" autocomplete="off"></div><div class="setting-row"><div><b>ApiPass · Suno</b><small>Generate with Suno and import completed tracks into Firefly</small></div><button class="ghost" id="connectSuno">${sunoConnected?'Manage connection':'Connect ApiPass'}</button></div></div>
     <div class="settings-section"><h3>Updates</h3><div class="setting-row update-setting-row"><div><b>Update channel</b><small>Stable follows main; Test follows the beta branch</small></div><span class="update-setting-controls"><select id="updateChannel"><option value="stable" ${settings.updateChannel!=='beta'?'selected':''}>Stable · main</option><option value="beta" ${settings.updateChannel==='beta'?'selected':''}>Test · beta</option></select><button class="ghost" id="checkForUpdates">Check now</button></span></div><div class="setting-row"><div><b>Update status</b><small>${updateStatusText()}</small></div><button class="ghost" id="showUpdateDetails">Details</button></div></div>`;
-  return `<header><span class="eyebrow">PRIVACY & CONTROL</span><h2>Decide what can go online</h2><p>Your library and listening history remain local. These switches control optional lookups.</p></header>
+  if(tab==='account')return accountSettingsMarkup();
+  return `<header><span class="eyebrow">PRIVACY & CONTROL</span><h2>Decide what can go online</h2><p>Your library and listening history remain local unless you explicitly enable account sync. These switches control optional lookups.</p></header>
     <div class="settings-section"><h3>Online discovery</h3>${settingToggle('onlineMetadata','Metadata and cover lookup','Allow MusicBrainz and Cover Art Archive searches')}${settingToggle('onlineLyrics','Lyrics lookup','Allow plain and time-synchronized LRCLIB searches')}${settingToggle('onlineArtistImages','Artist-image and GIF lookup','Allow Wikimedia, Deezer, TheAudioDB, GIPHY, and Tenor searches')}${settingToggle('onlineMusicVideos','Existing music-video lookup','Search video platforms before any AI generation')}</div>
     <div class="settings-section"><h3>Local data</h3><div class="setting-row"><div><b>Analytics and telemetry</b><small>Firefly does not send listening analytics or usage telemetry</small></div><span class="privacy-status"><i></i>Always off</span></div><div class="setting-row"><div><b>Saved data location</b><small>${esc(dataDirectory||'Browser local storage')}</small></div><button class="ghost" id="openDataFolder" ${dataDirectory?'':'disabled'}>Open folder</button></div><div class="setting-row"><div><b>Reset preferences</b><small>Restore interface, playback, and library defaults without deleting music</small></div><button class="ghost danger" id="resetSettings">Reset settings</button></div></div>`;
 }
 
 function renderSettings() {
-  const tabs=[['appearance','Appearance'],['playback','Playback'],['library','Library'],['integrations','Integrations'],['privacy','Privacy & control']];
+  const tabs=[['appearance','Appearance'],['playback','Playback'],['library','Library'],['account','Account & sync'],['integrations','Integrations'],['privacy','Privacy & control']];
   view.innerHTML = pageHead('MAKE IT YOURS','Settings','Tune every part of Firefly without interrupting playback.') + `<div class="settings-grid"><nav class="settings-menu">${tabs.map(([value,label])=>`<button class="${settingsTab===value?'active':''}" data-settings-tab="${value}">${label}</button>`).join('')}</nav><section class="settings-panel" data-settings-panel="${settingsTab}">${settingsPanelMarkup(settingsTab)}</section></div>`;
   if(settingsTab==='integrations'){const sections=$$('.settings-section',view);(sections[1]||sections[0])?.insertAdjacentHTML(sections[1]?'beforebegin':'afterend',discordSettingsMarkup());updateDiscordStatusView()}
   $$('[data-settings-tab]',view).forEach(button=>button.onclick=()=>{settingsTab=button.dataset.settingsTab;renderSettings()});
@@ -943,9 +990,14 @@ function renderSettings() {
   if($('#discordApplicationId'))$('#discordApplicationId').onchange=e=>{settings.discordApplicationId=e.target.value.replace(/\D/g,'').slice(0,22);e.target.value=settings.discordApplicationId;saveLibrary();configureDiscordPresence(true)};
   if($('#discordLargeImageKey'))$('#discordLargeImageKey').onchange=e=>{settings.discordLargeImageKey=e.target.value.trim().slice(0,128);saveLibrary();configureDiscordPresence(true)};
   if($('#reconnectDiscord'))$('#reconnectDiscord').onclick=()=>configureDiscordPresence(true);
+  if($('#cloudServerUrl'))$('#cloudServerUrl').onchange=async e=>{settings.cloudServerUrl=e.target.value.trim().replace(/\/$/,'');saveLibrary();await initializeAccount();renderSettings()};
+  if($('#accountSignIn'))$('#accountSignIn').onclick=()=>openAccountPortal('signin');if($('#accountCreate'))$('#accountCreate').onclick=()=>openAccountPortal('signup');if($('#accountManagePasskeys'))$('#accountManagePasskeys').onclick=()=>openAccountPortal('passkeys');
+  if($('#accountClaimCode'))$('#accountClaimCode').onclick=claimAccountConnection;if($('#accountConnectionCode'))$('#accountConnectionCode').onkeydown=e=>{if(e.key==='Enter')claimAccountConnection()};
+  if($('#accountSyncNow'))$('#accountSyncNow').onclick=syncAccountNow;if($('#accountRestore'))$('#accountRestore').onclick=restoreAccountCloud;
+  if($('#accountSignOut'))$('#accountSignOut').onclick=()=>confirmRemove('Sign out of Firefly?','Your local library stays on this PC. Cloud backup will stop until you sign in again.',async()=>{await window.firefly.signOutAccount();settings.cloudSyncEnabled=false;accountState={signedIn:false,configured:Boolean(settings.cloudServerUrl),status:'ready',storageUsed:0,storageLimit:150*1024*1024};saveLibrary();renderSettings();toast('Signed out on this PC')});
   if($('#openaiKey'))$('#openaiKey').onchange=e=>{credentials.openaiKey=e.target.value.trim();saveCredentials();if(credentials.openaiKey)albums.filter(album=>album.dynamicCaseArt?.autoGenerate).forEach(queueDefaultDynamicCase);toast('OpenAI key saved','Stored with Windows encryption.')};
-  if($('#openDataFolder'))$('#openDataFolder').onclick=()=>window.firefly?.openDataDirectory();if($('#manageCloudSources'))$('#manageCloudSources').onclick=()=>cloudSources().length?openCloudSourcesModal():addCloudSource();if($('#manageLiveFolders'))$('#manageLiveFolders').onclick=()=>localLiveFolders().length?openLiveFoldersModal():addLiveFolder();if($('#connectSuno'))$('#connectSuno').onclick=connectSunoModal;
-  if($('#resetSettings'))$('#resetSettings').onclick=()=>confirmRemove('Reset preferences?','Music, playlists, artwork, and connections will stay intact.',()=>{const channel=settings.updateChannel;settings={...defaultSettings,updateChannel:channel};shuffleEnabled=settings.shuffle;repeatMode=settings.repeatMode;visualizerStyle=settings.visualizerStyle;applySettings();saveLibrary();configureDiscordPresence();renderSettings();toast('Preferences reset')});
+  if($('#openDataFolder'))$('#openDataFolder').onclick=()=>window.firefly?.openDataDirectory();if($('#manageLiveFolders'))$('#manageLiveFolders').onclick=()=>localLiveFolders().length?openLiveFoldersModal():addLiveFolder();if($('#connectSuno'))$('#connectSuno').onclick=connectSunoModal;
+  if($('#resetSettings'))$('#resetSettings').onclick=()=>confirmRemove('Reset preferences?','Music, playlists, artwork, and connections will stay intact.',()=>{const channel=settings.updateChannel,cloudServerUrl=settings.cloudServerUrl;settings={...defaultSettings,updateChannel:channel,cloudServerUrl};shuffleEnabled=settings.shuffle;repeatMode=settings.repeatMode;visualizerStyle=settings.visualizerStyle;applySettings();saveLibrary();configureDiscordPresence();renderSettings();toast('Preferences reset')});
 }
 
 function sunoStateLabel(state='queuing'){return({queuing:'Queued',pending:'Queued',generating:'Generating',processing:'Generating',success:'Complete',fail:'Failed'}[state]||state)}
@@ -1235,15 +1287,14 @@ function makeTrack(entry,album,index=0){const meta=entry.metadata||{};return{id:
 
 function stableLiveKey(value=''){let hash=2166136261;for(const character of String(value)){hash^=character.charCodeAt(0);hash=Math.imul(hash,16777619)}return(hash>>>0).toString(36)}
 function liveFolderById(id){return liveFolders.find(folder=>folder.id===id)}
-function cloudSources(){return liveFolders.filter(folder=>folder.kind==='cloud')}
-function localLiveFolders(){return liveFolders.filter(folder=>folder.kind!=='cloud')}
+function localLiveFolders(){return liveFolders}
 function sourceAtPath(source){const key=String(source?.path||'').replaceAll('\\','/').replace(/\/+$/,'').toLowerCase();return liveFolders.find(folder=>folder.id!==source?.id&&String(folder.path||'').replaceAll('\\','/').replace(/\/+$/,'').toLowerCase()===key)}
 function preferredFolderImage(entries,key){return entries.filter(entry=>entry.kind==='image'&&((entry.relativePath||'').split('/').slice(0,-1).join('/'))===key).sort((left,right)=>(/^(cover|folder|front)/i.test(left.name)?-1:1)-(/^(cover|folder|front)/i.test(right.name)?-1:1))[0]||null}
 function applyLiveFolderSnapshot(snapshot,{persist=true,notify=true}={}){
   if(!snapshot?.folder?.id)return{added:0,removed:0,updated:0,offline:true};
   let folder=liveFolderById(snapshot.folder.id),priorStatus=folder?.status,priorError=folder?.error;
   if(!folder){folder={...snapshot.folder};liveFolders.push(folder)}else Object.assign(folder,snapshot.folder);
-  if(!snapshot.ok){folder.status='offline';folder.error=snapshot.error||'Folder unavailable';if(persist&&(priorStatus!=='offline'||priorError!==folder.error))saveLibrary();if(notify&&priorStatus!=='offline')toast(folder.kind==='cloud'?'Cloud source is offline':'Live folder is offline',`${folder.name} will reconnect automatically.`);return{added:0,removed:0,updated:0,offline:true}}
+  if(!snapshot.ok){folder.status='offline';folder.error=snapshot.error||'Folder unavailable';if(persist&&(priorStatus!=='offline'||priorError!==folder.error))saveLibrary();if(notify&&priorStatus!=='offline')toast('Live folder is offline',`${folder.name} will reconnect automatically.`);return{added:0,removed:0,updated:0,offline:true}}
   folder.status='synced';folder.error='';folder.lastSyncedAt=snapshot.scannedAt||Date.now();
   const entries=Array.isArray(snapshot.entries)?snapshot.entries:[],audioEntries=entries.filter(entry=>entry.kind==='audio'),activeIds=new Set(audioEntries.map(entry=>entry.liveTrackId));
   const existingTracks=new Map(allTracks().map(track=>[track.id,track])),groups=new Map();
@@ -1260,14 +1311,14 @@ function applyLiveFolderSnapshot(snapshot,{persist=true,notify=true}={}){
     sourceTracks.forEach((entry,index)=>{
       const meta=entry.metadata||{},sourceMetadata={title:meta.title||cleanTrackTitle(entry.name),artist:meta.artist||album.artist,album:meta.album||album.title,track:Number(meta.track)||index+1,disc:Number(meta.disc)||1};
       let track=existingTracks.get(entry.liveTrackId);
-      if(!track){track=makeTrack(entry,album,index);track.id=entry.liveTrackId;track.liveFolderId=folder.id;track.cloudSourceId=folder.kind==='cloud'?folder.id:null;track.liveManagedAlbumId=album.id;track.sourceModifiedAt=entry.modifiedAt||0;track.sourceSize=entry.size||0;track.sourceMetadataPending=Boolean(entry.metadataError);track.liveSourceMetadata=sourceMetadata;album.tracks.push(track);existingTracks.set(track.id,track);added++}
+      if(!track){track=makeTrack(entry,album,index);track.id=entry.liveTrackId;track.liveFolderId=folder.id;track.liveManagedAlbumId=album.id;track.sourceModifiedAt=entry.modifiedAt||0;track.sourceSize=entry.size||0;track.sourceMetadataPending=Boolean(entry.metadataError);track.liveSourceMetadata=sourceMetadata;album.tracks.push(track);existingTracks.set(track.id,track);added++}
       else{
         const prior=track.liveSourceMetadata||{},sourceChanged=track.sourceModifiedAt!==entry.modifiedAt||track.sourceSize!==entry.size,metadataResolved=track.sourceMetadataPending&&!entry.metadataError;
         if(sourceChanged||metadataResolved){if(!prior.title||track.title===prior.title)track.title=sourceMetadata.title;if(!prior.artist||track.artist===prior.artist)track.artist=sourceMetadata.artist;track.duration=displayDuration(meta.duration);track.durationSeconds=Number(meta.duration)||0;track.trackNumber=sourceMetadata.track;track.discNumber=sourceMetadata.disc;if(meta.lyrics&&(!track.lyrics||track.lyrics?.source==='Embedded metadata'))track.lyrics=meta.lyrics;updated++}
         const userMoved=track.liveManagedAlbumId&&track.albumId!==track.liveManagedAlbumId;
         if(!userMoved&&track.albumId!==album.id){const oldAlbum=albumById(track.albumId);if(oldAlbum)oldAlbum.tracks=oldAlbum.tracks.filter(item=>item.id!==track.id);if(!album.tracks.includes(track))album.tracks.push(track)}
         if(!userMoved){track.albumId=album.id;track.album=album.title;track.liveManagedAlbumId=album.id}
-        track.url=entry.url;track.path=entry.path;track.liveFolderId=folder.id;track.cloudSourceId=folder.kind==='cloud'?folder.id:null;track.sourceModifiedAt=entry.modifiedAt||0;track.sourceSize=entry.size||0;track.sourceMetadataPending=Boolean(entry.metadataError);track.liveSourceMetadata=sourceMetadata;
+        track.url=entry.url;track.path=entry.path;track.liveFolderId=folder.id;track.sourceModifiedAt=entry.modifiedAt||0;track.sourceSize=entry.size||0;track.sourceMetadataPending=Boolean(entry.metadataError);track.liveSourceMetadata=sourceMetadata;
       }
     });
     album.tracks.sort((left,right)=>(left.discNumber||1)-(right.discNumber||1)||(left.trackNumber||999)-(right.trackNumber||999));if(createdAlbum&&!isLoose)queueDefaultDynamicCase(album);
@@ -1276,7 +1327,7 @@ function applyLiveFolderSnapshot(snapshot,{persist=true,notify=true}={}){
   if(staleIds.size){albums.forEach(album=>album.tracks=album.tracks.filter(track=>!staleIds.has(track.id)));playbackQueue=playbackQueue.filter(track=>!staleIds.has(track.id));playbackOriginalQueue=playbackOriginalQueue.filter(track=>!staleIds.has(track.id));staleIds.forEach(id=>selectedTrackIds.delete(id))}
   folder.trackCount=audioEntries.length;folder.albumCount=[...groups.values()].filter(group=>group.length>1||mostCommon(group.map(entry=>entry.metadata?.album))).length;
   if(persist&&(added||staleIds.size||updated||priorStatus!=='synced'))saveLibrary();
-  if(notify&&(added||staleIds.size||updated))toast(folder.kind==='cloud'?'Cloud library synced':'Live folder synced',`${folder.name} · ${added} added · ${staleIds.size} removed${updated?` · ${updated} refreshed`:''}`);
+  if(notify&&(added||staleIds.size||updated))toast('Live folder synced',`${folder.name} · ${added} added · ${staleIds.size} removed${updated?` · ${updated} refreshed`:''}`);
   return{added,removed:staleIds.size,updated,offline:false};
 }
 async function initializeLiveFolderSync(){
@@ -1289,29 +1340,19 @@ async function initializeLiveFolderSync(){
 }
 async function addLiveFolder(){
   if(!window.firefly?.addLiveFolder){toast('Live folders are available in the Windows app');return}
-  try{const snapshot=await window.firefly.addLiveFolder();if(!snapshot)return;const duplicate=sourceAtPath(snapshot.folder);if(duplicate){window.firefly?.removeLiveFolder?.(snapshot.folder.id);toast('Folder already linked',`${duplicate.name} is already managed as ${duplicate.kind==='cloud'?'cloud storage':'a live folder'}.`);openFolderManager(duplicate);return}applyLiveFolderSnapshot(snapshot,{notify:false});toast(snapshot.ok?'Live folder connected':'Live folder saved',snapshot.ok?`${snapshot.folder.trackCount} tracks are now kept in sync.`:'Firefly will keep trying to reconnect.');openLiveFoldersModal()}
+  try{const snapshot=await window.firefly.addLiveFolder();if(!snapshot)return;const duplicate=sourceAtPath(snapshot.folder);if(duplicate){window.firefly?.removeLiveFolder?.(snapshot.folder.id);toast('Folder already linked',`${duplicate.name} is already managed as a live folder.`);openFolderManager(duplicate);return}applyLiveFolderSnapshot(snapshot,{notify:false});toast(snapshot.ok?'Live folder connected':'Live folder saved',snapshot.ok?`${snapshot.folder.trackCount} tracks are now kept in sync.`:'Firefly will keep trying to reconnect.');openLiveFoldersModal()}
   catch(error){toast('Could not add live folder',error?.message||'The selected folder could not be scanned.')}
 }
-async function addCloudSource(){
-  if(!window.firefly?.addCloudSource){toast('Cloud sync is available in the Windows app');return}
-  try{const snapshot=await window.firefly.addCloudSource();if(!snapshot)return;const duplicate=sourceAtPath(snapshot.folder);if(duplicate){window.firefly?.removeLiveFolder?.(snapshot.folder.id);toast('Folder already linked',`${duplicate.name} is already managed as ${duplicate.kind==='cloud'?'cloud storage':'a live folder'}.`);openFolderManager(duplicate);return}applyLiveFolderSnapshot(snapshot,{notify:false});const pending=Number(snapshot.folder.metadataPending)||0;toast(snapshot.ok?`${snapshot.folder.provider} connected`:'Cloud source saved',snapshot.ok?`${snapshot.folder.trackCount} tracks imported${pending?` · ${pending} waiting for cloud download`:''}.`:'Firefly will reconnect when the provider is available.');openCloudSourcesModal()}
-  catch(error){toast('Could not link cloud storage',error?.message||'The selected cloud folder could not be scanned.')}
-}
-function openFolderManager(folder){if(folder?.kind==='cloud')openCloudSourcesModal();else openLiveFoldersModal()}
+function openFolderManager(){openLiveFoldersModal()}
 async function rescanLiveFolder(id){const folder=liveFolderById(id);if(!folder||!window.firefly?.rescanLiveFolder)return;folder.status='scanning';openFolderManager(folder);try{const snapshot=await window.firefly.rescanLiveFolder(folder);applyLiveFolderSnapshot(snapshot);openFolderManager(folder)}catch(error){folder.status='offline';folder.error=error?.message||'Scan failed';saveLibrary();openFolderManager(folder)}}
 function removeLiveFolder(id){
   const folder=liveFolderById(id);if(!folder)return;const ids=new Set(allTracks().filter(track=>track.liveFolderId===id).map(track=>track.id));
-  const cloud=folder.kind==='cloud';confirmRemove(cloud?'Unlink cloud storage?':'Remove live folder?',`${folder.name} and its ${ids.size} synced track${ids.size===1?'':'s'} will be removed from Firefly. Files in ${cloud?'cloud storage':'the source folder'} stay untouched.`,()=>{albums.forEach(album=>album.tracks=album.tracks.filter(track=>!ids.has(track.id)));customPlaylists.forEach(playlist=>removePlaylistTrackReferences(playlist,ids));playbackQueue=playbackQueue.filter(track=>!ids.has(track.id));playbackOriginalQueue=playbackOriginalQueue.filter(track=>!ids.has(track.id));liveFolders=liveFolders.filter(item=>item.id!==id);window.firefly?.removeLiveFolder?.(id);saveLibrary();render();toast(cloud?'Cloud storage unlinked':'Live folder removed',folder.name)})
+  confirmRemove('Remove live folder?',`${folder.name} and its ${ids.size} synced track${ids.size===1?'':'s'} will be removed from Firefly. Files in the source folder stay untouched.`,()=>{albums.forEach(album=>album.tracks=album.tracks.filter(track=>!ids.has(track.id)));customPlaylists.forEach(playlist=>removePlaylistTrackReferences(playlist,ids));playbackQueue=playbackQueue.filter(track=>!ids.has(track.id));playbackOriginalQueue=playbackOriginalQueue.filter(track=>!ids.has(track.id));liveFolders=liveFolders.filter(item=>item.id!==id);window.firefly?.removeLiveFolder?.(id);saveLibrary();render();toast('Live folder removed',folder.name)})
 }
 function openLiveFoldersModal(){
   const folders=localLiveFolders(),rows=folders.length?folders.map(folder=>`<article class="live-folder-row ${esc(folder.status||'pending')}"><span class="live-folder-icon">${icon('albums')}<i></i></span><div><b>${esc(folder.name)}</b><small title="${esc(folder.path)}">${esc(folder.path)}</small><em>${folder.status==='synced'?`${folder.trackCount||0} tracks · synced ${folder.lastSyncedAt?new Date(folder.lastSyncedAt).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}):'now'}`:folder.status==='scanning'?'Scanning for changes…':folder.status==='offline'?'Offline · retrying automatically':'Waiting to sync'}</em></div><button class="ghost" data-live-rescan="${esc(folder.id)}">Scan now</button><button class="icon-button danger" data-live-remove="${esc(folder.id)}" title="Remove live folder">${icon('close')}</button></article>`).join(''):`<div class="empty-state compact">${icon('albums')}<h2>No live folders yet</h2><p>Add a music folder and Firefly will continuously mirror its supported audio files.</p></div>`;
   openModal(`<div class="modal-head"><h2>Live folders</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><p class="modal-intro">Live folders stay outside Firefly and are watched for new, changed, moved, or deleted music. Disconnected folders remain in your library and reconnect automatically.</p><div class="live-folder-list">${rows}</div></div><div class="modal-actions"><button class="ghost close-modal">Done</button><button class="primary" id="addAnotherLiveFolder">${icon('plus')} Add live folder</button></div>`);
   $('#addAnotherLiveFolder').onclick=addLiveFolder;$$('[data-live-rescan]',modalLayer).forEach(button=>button.onclick=()=>rescanLiveFolder(button.dataset.liveRescan));$$('[data-live-remove]',modalLayer).forEach(button=>button.onclick=()=>removeLiveFolder(button.dataset.liveRemove));
-}
-function openCloudSourcesModal(){
-  const sources=cloudSources(),rows=sources.length?sources.map(folder=>`<article class="live-folder-row cloud ${esc(folder.status||'pending')}"><span class="live-folder-icon cloud-provider">${icon('spark')}<i></i></span><div><b>${esc(folder.name)}</b><small>${esc(folder.provider||'Cloud storage')} · <span title="${esc(folder.path)}">${esc(folder.path)}</span></small><em>${folder.status==='synced'?`${folder.trackCount||0} tracks · ${folder.metadataPending?`${folder.metadataPending} metadata ${folder.metadataPending===1?'retry':'retries'} pending · `:''}synced ${folder.lastSyncedAt?new Date(folder.lastSyncedAt).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}):'now'}`:folder.status==='scanning'?'Scanning cloud library…':folder.status==='offline'?'Provider offline · retrying automatically':'Waiting to sync'}</em></div><button class="ghost" data-live-rescan="${esc(folder.id)}">Sync now</button><button class="icon-button danger" data-live-remove="${esc(folder.id)}" title="Unlink cloud storage">${icon('close')}</button></article>`).join(''):`<div class="empty-state compact cloud-empty">${icon('spark')}<h2>No cloud storage linked</h2><p>Choose a music folder from a provider that syncs into Windows.</p></div>`;
-  openModal(`<div class="modal-head"><h2>Cloud music sync</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><p class="modal-intro">Link a folder inside OneDrive, Dropbox, Google Drive, iCloud Drive, Box, Nextcloud, or another Windows cloud provider. Firefly watches it for changes, imports supported audio, and reads embedded title, artist, album, artwork, genre, lyrics, and track order. Opening online-only files may ask your provider to download them.</p><div class="cloud-sync-banner"><span>${icon('spark')}</span><div><b>Your music stays with your provider</b><small>Firefly stores only library data and source paths. Unlinking never deletes cloud files.</small></div></div><div class="live-folder-list">${rows}</div></div><div class="modal-actions"><button class="ghost close-modal">Done</button><button class="primary" id="addAnotherCloudSource">${icon('plus')} Link cloud storage</button></div>`);
-  $('#addAnotherCloudSource').onclick=addCloudSource;$$('[data-live-rescan]',modalLayer).forEach(button=>button.onclick=()=>rescanLiveFolder(button.dataset.liveRescan));$$('[data-live-remove]',modalLayer).forEach(button=>button.onclick=()=>removeLiveFolder(button.dataset.liveRemove));
 }
 
 function normalizeBrowserFiles(files){return [...files].map(file=>({name:file.name,relativePath:file.webkitRelativePath||file.name,url:URL.createObjectURL(file),kind:file.type.startsWith('image/')?'image':'audio'}))}
@@ -1371,7 +1412,7 @@ async function chooseZip(){
   if(!window.firefly?.chooseMusicZip){toast('ZIP import is available in the Windows app');return}
   try{const archive=await window.firefly.chooseMusicZip();if(archive)importFolderEntries(archive)}catch(error){toast('Could not import ZIP',error?.message||'The archive may be damaged or encrypted.')}
 }
-function showImportMenu(){const rect=$('#importTrigger').getBoundingClientRect();showContextMenu([{label:'Import music files',icon:'song',action:()=>chooseFiles()},{label:'Import a folder once',icon:'albums',action:chooseFolder},{label:'Add a live folder',icon:'spark',action:addLiveFolder},{label:'Link cloud storage',icon:'upload',action:addCloudSource},{label:'Import a ZIP archive',icon:'upload',action:chooseZip},...(liveFolders.length?[{separator:true},...(cloudSources().length?[{label:'Manage cloud sync',icon:'spark',action:openCloudSourcesModal}]:[]),...(localLiveFolders().length?[{label:'Manage live folders',icon:'settings',action:openLiveFoldersModal}]:[])]:[])],rect.right-215,rect.bottom+7)}
+function showImportMenu(){const rect=$('#importTrigger').getBoundingClientRect();showContextMenu([{label:'Import music files',icon:'song',action:()=>chooseFiles()},{label:'Import a folder once',icon:'albums',action:chooseFolder},{label:'Add a live folder',icon:'spark',action:addLiveFolder},{label:'Import a ZIP archive',icon:'upload',action:chooseZip},...(localLiveFolders().length?[{separator:true},{label:'Manage live folders',icon:'settings',action:openLiveFoldersModal}]:[])],rect.right-215,rect.bottom+7)}
 
 function showTrackMenu(track){
   if(track.pending){openModal(`<div class="modal-head"><h2>Pending track</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><p style="color:#888">${esc(track.title)} by ${esc(track.artist)} is in the playlist but not in your library. Import the matching audio file to activate it and auto-tag its metadata.</p></div><div class="modal-actions"><button class="ghost close-modal">Cancel</button><button class="primary" id="importPending">${icon('upload')} Import audio</button></div>`,true);$('#importPending').onclick=()=>{closeModal();chooseFiles(track.id)};return}
@@ -1749,6 +1790,7 @@ window.addEventListener('resize',()=>{hideContextMenu();if($('#fullscreenPlayer'
 $('.content').addEventListener('scroll',hideContextMenu,{passive:true});
 window.firefly?.onMediaCommand?.(handleNativeMediaCommand);
 window.firefly?.onDiscordStatus?.(status=>{discordPresenceState=status||discordPresenceState;updateDiscordStatusView()});
+window.firefly?.onAccountSyncStatus?.(status=>{accountSyncState=status||accountSyncState;if(status?.storageUsed!=null)accountState.storageUsed=Number(status.storageUsed)||0;if(status?.storageLimit!=null)accountState.storageLimit=Number(status.storageLimit)||accountState.storageLimit;if(currentView==='settings'&&settingsTab==='account')renderSettings()});
 installMediaSessionHandlers();
 syncNativePlaybackState();
 document.addEventListener('keydown',e=>{
