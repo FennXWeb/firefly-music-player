@@ -1,9 +1,9 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.31",
-  "publishedAt": "2026-08-05T19:07:34.3284023Z",
+  "version": "0.1.32",
+  "publishedAt": "2026-08-08T22:17:39.2152217Z",
   "notes": "Replaces the broken GIPHY page scraper with its live JSON result feed, dynamically discovers the current frontend search credential, and runs separate exact artist, singer, and band queries with cross-query deduplication for up to 24 distinct GIPHY options. Removes animated-GIF badges from artist portraits and lookup cards, removes the Personalized Locally home badge, and increases the animated result capacity so other sources remain visible.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.31/Firefly-0.1.31-Setup.exe",
-  "sha256": "61C7E48AD500470BCE010256D73B06370C75F5C2A59B5B406758FF12C59A3E5A"
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.32/Firefly-0.1.32-Setup.exe",
+  "sha256": "616D998AC8F00554419C150267AAA4546F943F23B620A736F36843A0CDA3AAFE"
 }
