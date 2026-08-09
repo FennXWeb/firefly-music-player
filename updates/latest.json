@@ -2,7 +2,7 @@
   "channel": "beta",
   "branch": "beta",
   "version": "0.1.41",
-  "publishedAt": null,
+  "publishedAt": "2026-08-09T03:26:09.1966088Z",
   "audience": "user",
   "highlights": [
     "Imports now live in Ignifire-managed storage, so removing the original source does not break your library.",
@@ -13,5 +13,5 @@
   ],
   "notes": "Adds managed music storage, streaming-first cloud playback, safe cloud download controls, quota-aware sync, a What’s New feed, dedicated update settings, deeper liquid glass, and a minimized media-key now-playing popup.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.41/Ignifire-0.1.41-Setup.exe",
-  "sha256": ""
+  "sha256": "351A23935C8B75C16842847A63A081F46C76A6B723FBAA8F3D62E49E7846EAD2"
 }
