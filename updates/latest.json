@@ -2,7 +2,7 @@
   "channel": "beta",
   "branch": "beta",
   "version": "0.1.42",
-  "publishedAt": null,
+  "publishedAt": "2026-08-09T03:41:50.7156862Z",
   "audience": "user",
   "highlights": [
     "The player bar now comes alive with the artwork, colors, and animation of the playlist you started.",
@@ -12,5 +12,5 @@
   ],
   "notes": "Adds playlist-aware player-bar theming, animated customized cover art, a clickable playlist source link, and playing-now equalizers throughout song lists.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.42/Ignifire-0.1.42-Setup.exe",
-  "sha256": ""
+  "sha256": "8EF87415A2BD7224B7EBB7C07C4EEE0FB3AD5DEC0FBEAF5BC37487350EA0ADA8"
 }
