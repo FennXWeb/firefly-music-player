@@ -1,9 +1,9 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.33",
-  "publishedAt": "2026-08-08T23:04:00.7349735Z",
+  "version": "0.1.34",
+  "publishedAt": "2026-08-09T00:02:13.3101889Z",
   "notes": "Makes Discord Rich Presence a built-in Firefly feature using the official shared Firefly Discord application. Users no longer need to create a Discord developer app, enter an Application ID, or configure an artwork asset; they only choose their privacy, playback-detail, timer, artwork, and button preferences.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.33/Firefly-0.1.33-Setup.exe",
-  "sha256": "7AD8BF3F6B0B237A5F63C414F3887C99BA3F344420F7A9B49ED1728800F08C51"
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.34/Firefly-0.1.34-Setup.exe",
+  "sha256": "1CEC458ABE3B09C62E967D5BE25E413661689F5AA7B8025C5327B0ADE08BD360"
 }
