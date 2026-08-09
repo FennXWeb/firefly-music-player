@@ -1,16 +1,16 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.42",
-  "publishedAt": "2026-08-09T03:41:50.7156862Z",
+  "version": "0.1.43",
+  "publishedAt": null,
   "audience": "user",
   "highlights": [
-    "The player bar now comes alive with the artwork, colors, and animation of the playlist you started.",
-    "A new clickable “from playlist” link makes it easy to jump back to the active playlist.",
-    "Song lists now highlight the current track with an animated playing-now equalizer.",
-    "Starting a track inside a playlist now keeps that playlist’s sorted queue and visual identity."
+    "Large libraries no longer trigger desktop cache warnings or duplicate themselves into browser storage.",
+    "Embedded cover, case, playlist, and artist artwork now moves into durable managed artwork files.",
+    "Cloud indicators appear progressively as each track finishes uploading instead of waiting for the entire library.",
+    "Partial albums show clear sync progress, and Account settings now displays the live track count."
   ],
-  "notes": "Adds playlist-aware player-bar theming, animated customized cover art, a clickable playlist source link, and playing-now equalizers throughout song lists.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.42/Ignifire-0.1.42-Setup.exe",
-  "sha256": "8EF87415A2BD7224B7EBB7C07C4EEE0FB3AD5DEC0FBEAF5BC37487350EA0ADA8"
+  "notes": "Fixes oversized desktop caching, externalizes embedded artwork into durable managed files, and adds progressive cloud-track and album sync indicators with live upload progress.",
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.43/Ignifire-0.1.43-Setup.exe",
+  "sha256": ""
 }

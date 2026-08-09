@@ -82,6 +82,8 @@ const ACCOUNT_STORAGE_LIMIT_BYTES = 256 * 1024 * 1024 * 1024;
 let accountState = { signedIn:false, configured:false, status:'idle', storageUsed:0, storageLimit:ACCOUNT_STORAGE_LIMIT_BYTES };
 let accountSyncState = { status:'idle' };
 let localStateSavedAt = 0;
+let cloudMarkerPersistenceTimer = null;
+let legacyCacheRetired = false;
 const VIDEO_RECHECK_MS = 14 * 24 * 60 * 60 * 1000;
 
 const view = $('#view');
@@ -95,8 +97,8 @@ function albumById(id) { return albums.find(a => a.id === id); }
 function isCloudTrack(track){return Boolean(track?.cloudFile?.hash)}
 function isCloudDownloaded(track){return isCloudTrack(track)&&Boolean(track?.path)}
 function cloudTrackBadge(track){return isCloudTrack(track)?`<span class="cloud-track-badges"><i class="cloud-badge" title="Stored in your cloud">CLOUD</i>${isCloudDownloaded(track)?'<i class="downloaded-badge" title="Downloaded on this PC">DOWNLOADED</i>':''}</span>`:''}
-function albumCloudState(album){const tracks=(album?.tracks||[]).filter(track=>!track.pending);return{cloud:tracks.length>0&&tracks.every(isCloudTrack),downloaded:tracks.length>0&&tracks.every(isCloudDownloaded)}}
-function albumCloudBadge(album){const state=albumCloudState(album);return state.cloud?`<span class="album-cloud-badges"><i>CLOUD</i>${state.downloaded?'<i>DOWNLOADED</i>':''}</span>`:''}
+function albumCloudState(album){const tracks=(album?.tracks||[]).filter(track=>!track.pending),cloudCount=tracks.filter(isCloudTrack).length;return{cloud:tracks.length>0&&cloudCount===tracks.length,partial:cloudCount>0&&cloudCount<tracks.length,cloudCount,total:tracks.length,downloaded:tracks.length>0&&tracks.every(isCloudDownloaded)}}
+function albumCloudBadge(album){const state=albumCloudState(album);return state.cloud?`<span class="album-cloud-badges"><i>CLOUD</i>${state.downloaded?'<i>DOWNLOADED</i>':''}</span>`:state.partial?`<span class="album-cloud-badges"><i title="${state.cloudCount} of ${state.total} tracks stored">${accountSyncState.status==='syncing'?'SYNCING':'PARTIAL CLOUD'}</i></span>`:''}
 async function setCloudDownload(tracks,download=true){
   let eligible=(tracks||[]).filter(track=>isCloudTrack(track)&&(download?!isCloudDownloaded(track):isCloudDownloaded(track)));if(!download&&eligible.length){const hashes=new Set(eligible.map(track=>track.cloudFile.hash));eligible=allTracks().filter(track=>hashes.has(track.cloudFile?.hash)&&isCloudDownloaded(track))}if(!eligible.length){toast(download?'Already downloaded':'No cloud downloads to remove');return}
   try{
@@ -188,17 +190,28 @@ function runBulkAction(action){
   if(action==='delete')deleteBulkSelection();
 }
 function currentLibraryState(){return { albums, playlists:customPlaylists, shelves, artistProfiles, sunoConnected, sunoJobs, playHistory, liveFolders, settings }}
+function adoptExternalArtworkReferences(saved){
+  const current=currentLibraryState();
+  const visit=(local,normalized)=>{
+    if(!local||!normalized||typeof local!=='object'||typeof normalized!=='object')return;
+    if(Array.isArray(local)&&Array.isArray(normalized)){const byId=new Map(normalized.filter(item=>item&&typeof item==='object'&&item.id!=null).map(item=>[String(item.id),item]));local.forEach((item,index)=>visit(item,item?.id!=null?byId.get(String(item.id)):normalized[index]));return}
+    for(const[key,value]of Object.entries(local)){const next=normalized[key];if(typeof value==='string'&&value.startsWith('data:image/')&&typeof next==='string'&&next.startsWith('file:'))local[key]=next;else if(value&&next&&typeof value==='object'&&typeof next==='object')visit(value,next)}
+  };
+  visit(current,saved);
+}
 function saveLibrary() {
   pruneEmptyAlbums();
   syncShelves();
   libraryRevision++;
   localStateSavedAt=Date.now();
   const state = currentLibraryState();
-  try { localStorage.setItem('firefly-library-v1', JSON.stringify(state)); }
-  catch { toast('Library is too large to cache','Your current session is safe, but large uploaded artwork may not persist.'); }
+  if (!window.firefly?.saveState) {
+    try { localStorage.setItem('firefly-library-v1', JSON.stringify(state)); }
+    catch { toast('Browser storage is full','Sign in and enable cloud sync to keep this library protected.'); }
+  }
   if (persistenceReady && window.firefly?.saveState) {
     clearTimeout(persistenceTimer);
-    persistenceTimer = setTimeout(() => window.firefly.saveState(state).catch(() => toast('Could not save library','Ignifire will retry after the next change.')), 120);
+    persistenceTimer = setTimeout(() => window.firefly.saveState(state).then(result=>{if(result?.state)adoptExternalArtworkReferences(result.state);if(!legacyCacheRetired){try{localStorage.removeItem('firefly-library-v1');legacyCacheRetired=true}catch{}}}).catch(() => toast('Could not save library','Ignifire will retry after the next change.')), 120);
   }
   renderSidebarPlaylists();
   scheduleDynamicViewRefresh();
@@ -293,6 +306,7 @@ async function initializePersistence() {
   albums.forEach(activateDynamicFont);
   const removedEmptyAlbums=pruneEmptyAlbums();
   persistenceReady = true;
+  if(durableState&&!migrateLegacy){try{localStorage.removeItem('firefly-library-v1');legacyCacheRetired=true}catch{}}
   applySettings();
   setRange($('#progress'), 0);
   setRange($('#volume'), settings.volume);
@@ -315,7 +329,9 @@ function applyCloudSyncResult(result,{persist=true}={}){
   const files=new Map((result?.trackFiles||[]).map(item=>[item.id,item.cloudFile]));
   const removed=new Set(result?.removedLocalTrackIds||[]);let changed=false;
   allTracks().forEach(track=>{if(files.has(track.id)){track.cloudFile=files.get(track.id);changed=true}if(removed.has(track.id)){track.path=null;track.url=`ignifire-cloud://track/${track.cloudFile.hash}/${encodeURIComponent(track.cloudFile.name||'track.audio')}`;track.managedFile=false;changed=true}});
-  if(changed&&persist)saveLibrary();return changed;
+  if(changed&&persist){clearTimeout(cloudMarkerPersistenceTimer);saveLibrary()}
+  else if(changed){libraryRevision++;renderSidebarPlaylists();scheduleDynamicViewRefresh(60);clearTimeout(cloudMarkerPersistenceTimer);cloudMarkerPersistenceTimer=setTimeout(()=>saveLibrary(),12000)}
+  return changed;
 }
 async function initializeAccount(){
   if(!window.firefly?.getAccountStatus)return;
@@ -1018,7 +1034,8 @@ function accountIdentity(){const user=accountState.user||{};return user.email&&!
 function accountSettingsMarkup(){
   const used=Number(accountState.storageUsed)||0,limit=Number(accountState.storageLimit)||ACCOUNT_STORAGE_LIMIT_BYTES,percent=Math.min(100,used/Math.max(1,limit)*100),identity=accountIdentity();
   if(!accountState.signedIn)return `<header class="account-settings-header"><span class="eyebrow">IGNIFIRE ACCOUNT</span><h2>Your library, wherever you listen</h2><p>Sign in securely with email, phone, password, a one-time code, or a passkey.</p></header><div class="settings-section account-intro-section"><div class="account-orbit"><i></i><i></i><i></i><span>${icon('spark')}</span></div><p>Playlists, library metadata, settings, artwork, listening history, and available music files can follow your account. Cloud backup stays off until you enable it.</p><div class="account-actions"><button class="primary" id="accountSignIn">Sign in</button><button class="ghost" id="accountCreate">Create account</button></div></div><div class="settings-section"><h3>Connect this app</h3><div class="setting-row"><div><b>Browser connection code</b><small>After signing in securely in your browser, paste the short-lived code here</small></div><span class="account-code-entry"><input id="accountConnectionCode" type="text" placeholder="Paste code" autocomplete="one-time-code"><button class="ghost" id="accountClaimCode">Connect</button></span></div></div>`;
-  return `<header class="account-settings-header signed-in"><span class="eyebrow">IGNIFIRE ACCOUNT</span><h2>${esc(accountState.user?.name||'Your cloud library')}</h2><p>${esc(identity)} · connected securely</p></header><div class="settings-section"><div class="account-profile-row"><span class="account-avatar">${esc((accountState.user?.name||identity).slice(0,1).toUpperCase())}</span><span><b>${esc(accountState.user?.name||identity)}</b><small>${esc(identity)}</small></span><button class="ghost" id="accountManagePasskeys">Manage passkeys ↗</button></div>${settingToggle('cloudSyncEnabled','Cloud backup & sync','Back up Ignifire data and download the newest library after signing in on another PC')}<div class="account-storage"><span><b>${formatStorage(used)} used</b><small>${formatStorage(limit)} included with this account</small></span><em>${Math.round(percent)}%</em><i><u style="width:${percent}%"></u></i></div><div class="setting-row"><div><b>Sync status</b><small>${accountSyncState.status==='syncing'?'Uploading changes securely…':accountSyncState.status==='error'?esc(accountSyncState.error||'Sync could not finish'):accountSyncState.status==='synced'?`Protected backup updated${accountSyncState.syncedAt?` · ${new Date(accountSyncState.syncedAt).toLocaleString()}`:''}`:settings.cloudSyncEnabled?'Changes sync automatically in the background':'Cloud sync is disabled'}</small></div><span class="account-sync-actions"><button class="ghost" id="accountRestore">Download cloud copy</button><button class="primary" id="accountSyncNow" ${settings.cloudSyncEnabled?'':'disabled'}>Sync now</button></span></div><div class="setting-row"><div><b>Sign out on this PC</b><small>Local music and settings stay on this computer</small></div><button class="ghost danger" id="accountSignOut">Sign out</button></div></div>`;
+  const syncDetail=accountSyncState.status==='syncing'?(accountSyncState.phase==='snapshot'?'Finishing encrypted library backup…':accountSyncState.totalTracks?`Uploading tracks · ${Math.min(Number(accountSyncState.uploadedTracks)||0,Number(accountSyncState.totalTracks))} of ${accountSyncState.totalTracks}`:'Preparing cloud backup…'):accountSyncState.status==='error'?esc(accountSyncState.error||'Sync could not finish'):accountSyncState.status==='synced'?`Protected backup updated${accountSyncState.syncedAt?` · ${new Date(accountSyncState.syncedAt).toLocaleString()}`:''}`:settings.cloudSyncEnabled?'Changes sync automatically in the background':'Cloud sync is disabled';
+  return `<header class="account-settings-header signed-in"><span class="eyebrow">IGNIFIRE ACCOUNT</span><h2>${esc(accountState.user?.name||'Your cloud library')}</h2><p>${esc(identity)} · connected securely</p></header><div class="settings-section"><div class="account-profile-row"><span class="account-avatar">${esc((accountState.user?.name||identity).slice(0,1).toUpperCase())}</span><span><b>${esc(accountState.user?.name||identity)}</b><small>${esc(identity)}</small></span><button class="ghost" id="accountManagePasskeys">Manage passkeys ↗</button></div>${settingToggle('cloudSyncEnabled','Cloud backup & sync','Back up Ignifire data and download the newest library after signing in on another PC')}<div class="account-storage"><span><b>${formatStorage(used)} used</b><small>${formatStorage(limit)} included with this account</small></span><em>${Math.round(percent)}%</em><i><u style="width:${percent}%"></u></i></div><div class="setting-row"><div><b>Sync status</b><small>${syncDetail}</small></div><span class="account-sync-actions"><button class="ghost" id="accountRestore">Download cloud copy</button><button class="primary" id="accountSyncNow" ${settings.cloudSyncEnabled?'':'disabled'}>Sync now</button></span></div><div class="setting-row"><div><b>Sign out on this PC</b><small>Local music and settings stay on this computer</small></div><button class="ghost danger" id="accountSignOut">Sign out</button></div></div>`;
 }
 async function openAccountPortal(mode='signin'){
   try{await window.firefly.openAccountPortal({mode});toast('Continue in your browser',mode==='passkeys'?'Add or remove passkeys, then return to Ignifire.':'Choose email, phone, password, one-time code, or passkey.')}
@@ -1882,7 +1899,7 @@ window.addEventListener('resize',()=>{hideContextMenu();if($('#fullscreenPlayer'
 $('.content').addEventListener('scroll',hideContextMenu,{passive:true});
 window.firefly?.onMediaCommand?.(handleNativeMediaCommand);
 window.firefly?.onDiscordStatus?.(status=>{discordPresenceState=status||discordPresenceState;updateDiscordStatusView()});
-window.firefly?.onAccountSyncStatus?.(status=>{accountSyncState=status||accountSyncState;if(status?.status==='synced')applyCloudSyncResult(status);if(status?.storageUsed!=null)accountState.storageUsed=Number(status.storageUsed)||0;if(status?.storageLimit!=null)accountState.storageLimit=Number(status.storageLimit)||accountState.storageLimit;if(status?.code==='STORAGE_QUOTA'&&!cloudQuotaAlertShown){cloudQuotaAlertShown=true;openModal(`<div class="modal-head"><h2>Cloud storage is full</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><p class="modal-intro">Ignifire paused new uploads. Your existing cloud library is still available to stream and download.</p></div><div class="modal-actions"><button class="primary close-modal">Got it</button></div>`)}if(currentView==='settings'&&settingsTab==='account')renderSettings()});
+window.firefly?.onAccountSyncStatus?.(status=>{accountSyncState=status||accountSyncState;if(status?.trackFiles?.length||status?.removedLocalTrackIds?.length)applyCloudSyncResult(status,{persist:status.status==='synced'});if(status?.storageUsed!=null)accountState.storageUsed=Number(status.storageUsed)||0;if(status?.storageLimit!=null)accountState.storageLimit=Number(status.storageLimit)||accountState.storageLimit;if(status?.code==='STORAGE_QUOTA'&&!cloudQuotaAlertShown){cloudQuotaAlertShown=true;openModal(`<div class="modal-head"><h2>Cloud storage is full</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><p class="modal-intro">Ignifire paused new uploads. Your existing cloud library is still available to stream and download.</p></div><div class="modal-actions"><button class="primary close-modal">Got it</button></div>`)}if(currentView==='settings'&&settingsTab==='account')renderSettings()});
 installMediaSessionHandlers();
 syncNativePlaybackState();
 document.addEventListener('keydown',e=>{

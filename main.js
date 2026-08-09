@@ -31,6 +31,7 @@ const updatesDirectory = path.join(dataDirectory, 'updates');
 const zipImportDirectory = path.join(dataDirectory, 'zip-imports');
 const cloudCacheDirectory = path.join(dataDirectory, 'cloud-library');
 const managedMusicDirectory = path.join(dataDirectory, 'music');
+const managedArtworkDirectory = path.join(dataDirectory, 'artwork');
 const apiPassBaseUrl = 'https://api.apipass.dev';
 const ignifireAccountEndpoint = 'https://accounts.ignifire.app';
 const updateRepository = 'FennXWeb/firefly-music-player';
@@ -269,6 +270,29 @@ async function writeBufferAtomic(filePath, value) {
     await fs.rename(temporaryPath, filePath);
   });
 }
+async function externalizeEmbeddedArtwork(state) {
+  if (!state || typeof state !== 'object') return { state, changed: false };
+  let changed = false;
+  const cached = new Map();
+  const extensions = { 'image/png':'.png', 'image/jpeg':'.jpg', 'image/jpg':'.jpg', 'image/webp':'.webp', 'image/gif':'.gif', 'image/bmp':'.bmp', 'image/svg+xml':'.svg' };
+  async function visit(value) {
+    if (typeof value === 'string') {
+      const match=value.match(/^data:(image\/(?:png|jpe?g|webp|gif|bmp|svg\+xml));base64,([A-Za-z0-9+/=\s]+)$/i);
+      if(!match)return value;
+      if(cached.has(value))return cached.get(value);
+      const buffer=Buffer.from(match[2].replace(/\s/g,''),'base64');
+      if(!buffer.length||buffer.length>64*1024*1024)return value;
+      const extension=extensions[match[1].toLowerCase()]||'.img',hash=crypto.createHash('sha256').update(buffer).digest('hex'),destination=path.join(managedArtworkDirectory,`${hash}${extension}`);
+      try{await fs.stat(destination)}catch{await writeBufferAtomic(destination,buffer)}
+      const url=pathToFileURL(destination).href;cached.set(value,url);changed=true;return url;
+    }
+    if(Array.isArray(value)){for(let index=0;index<value.length;index++)value[index]=await visit(value[index]);return value}
+    if(value&&typeof value==='object'){for(const key of Object.keys(value))value[key]=await visit(value[key]);return value}
+    return value;
+  }
+  await visit(state);
+  return { state, changed };
+}
 function isPathInside(filePath, directory) {
   if (!filePath || !directory) return false;
   const relative = path.relative(path.resolve(directory), path.resolve(filePath));
@@ -307,7 +331,8 @@ function cloudTrackUrl(cloudFile = {}) {
 }
 async function migrateManagedState(state) {
   if (!state || !Array.isArray(state.albums)) return { state, changed: false };
-  let changed = false;
+  const artwork=await externalizeEmbeddedArtwork(state);
+  let changed = artwork.changed;
   for (const album of state.albums) for (const track of album.tracks || []) {
     if (track.pending) continue;
     const filePath = String(track.path || '');
@@ -387,16 +412,19 @@ async function embedPortableFiles(value, key = '') {
     return `data:${mime};base64,${(await fs.readFile(filePath)).toString('base64')}`;
   } catch { return null; }
 }
-async function portableCloudState(state, endpoint, token) {
+async function portableCloudState(state, endpoint, token, onProgress) {
   const portable = JSON.parse(JSON.stringify(state || {}));
   portable.liveFolders = [];
   const sourceTracks = new Map((state?.albums || []).flatMap(album => (album.tracks || []).map(track => [track.id, track])));
+  const portableTracks=(portable.albums||[]).flatMap(album=>(album.tracks||[]).filter(track=>!track.pending));let completed=0;
   for (const album of portable.albums || []) for (const track of album.tracks || []) {
+    if(track.pending)continue;
     const original = sourceTracks.get(track.id), filePath = String(original?.path || '');
     track.path = null;track.url = null;delete track.liveFolderId;delete track.cloudSourceId;
-    if (!filePath) { if (original?.cloudFile?.hash) track.cloudFile = original.cloudFile;continue; }
+    if (!filePath) { if (original?.cloudFile?.hash) track.cloudFile = original.cloudFile;completed++;onProgress?.({id:track.id,cloudFile:track.cloudFile,completed,total:portableTracks.length});continue; }
     try { track.cloudFile = await uploadCloudObject(filePath, endpoint, token); }
     catch (error) { if (error.status === 413) throw error;track.cloudFileUnavailable = true; }
+    completed++;onProgress?.({id:track.id,cloudFile:track.cloudFile,completed,total:portableTracks.length});
   }
   await embedPortableFiles(portable);
   portable.cloudSnapshot = { createdAt: new Date().toISOString(), appVersion: app.getVersion() };
@@ -411,7 +439,12 @@ async function uploadCloudSnapshot(state, { manual = false } = {}) {
   if (manual) cloudQuotaBlocked = false;
   cloudSyncInFlight = true;
   try {
-    const portable = await portableCloudState(state, endpoint, token);
+    const progressFiles=[];let progressCompleted=0,progressTotal=0,lastProgressSent=0;
+    const sendProgress=(force=false)=>{const now=Date.now();if(!force&&progressFiles.length<4&&now-lastProgressSent<900)return;primaryWindow?.webContents?.send('account:sync-status',{status:'syncing',phase:'tracks',uploadedTracks:progressCompleted,totalTracks:progressTotal,trackFiles:progressFiles.splice(0)});lastProgressSent=now};
+    primaryWindow?.webContents?.send('account:sync-status',{status:'syncing',phase:'tracks',uploadedTracks:0,totalTracks:(state?.albums||[]).flatMap(album=>album.tracks||[]).filter(track=>!track.pending).length,trackFiles:[]});
+    const portable = await portableCloudState(state, endpoint, token,progress=>{progressCompleted=progress.completed;progressTotal=progress.total;if(progress.cloudFile?.hash)progressFiles.push({id:progress.id,cloudFile:progress.cloudFile});sendProgress()});
+    sendProgress(true);
+    primaryWindow?.webContents?.send('account:sync-status',{status:'syncing',phase:'snapshot',uploadedTracks:progressCompleted,totalTracks:progressTotal,trackFiles:[]});
     const response = await accountRequest('/v1/sync/snapshot', { method: 'PUT', endpoint, token, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ state: portable, deviceName: process.env.COMPUTERNAME || 'Windows PC' }) });
     const result = await response.json();
     const cloudTracks = new Map((portable.albums || []).flatMap(album => (album.tracks || []).filter(track => track.cloudFile?.hash).map(track => [track.id, track.cloudFile])));
@@ -1105,13 +1138,14 @@ app.whenReady().then(() => {
   );
   ipcMain.handle('state:load', async () => {
     const migrated = await migrateManagedState(await readJson(statePath, null));
-    if (migrated.changed) await writeJsonAtomic(statePath, { ...migrated.state, schemaVersion: 4, savedAt: new Date().toISOString() });
+    if (migrated.changed) await writeJsonAtomic(statePath, { ...migrated.state, schemaVersion: 5, savedAt: new Date().toISOString() });
     return { state: migrated.state, dataDirectory };
   });
   ipcMain.handle('state:save', async (_event, state) => {
-    await writeJsonAtomic(statePath, { ...state, schemaVersion: 4, savedAt: new Date().toISOString() });
-    scheduleCloudBackup(state);
-    return true;
+    const migrated=await externalizeEmbeddedArtwork(state),saved={ ...migrated.state, schemaVersion: 5, savedAt: new Date().toISOString() };
+    await writeJsonAtomic(statePath,saved);
+    scheduleCloudBackup(saved);
+    return { saved:true, state:migrated.changed?saved:null };
   });
   ipcMain.handle('credentials:load', async () => {
     const saved = await readJson(credentialsPath, {});
