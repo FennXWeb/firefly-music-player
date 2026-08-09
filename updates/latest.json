@@ -2,7 +2,7 @@
   "channel": "beta",
   "branch": "beta",
   "version": "0.1.45",
-  "publishedAt": "2026-08-09T23:04:32.4126658Z",
+  "publishedAt": "2026-08-09T23:08:42.2079918Z",
   "audience": "user",
   "highlights": [
     "Changing the volume no longer refreshes the active page.",
@@ -12,5 +12,5 @@
   ],
   "notes": "Separates volume persistence from library rendering so volume and mute changes save quietly without refreshing the current view.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.45/Ignifire-0.1.45-Setup.exe",
-  "sha256": "5499879D3924A281C004D77A3F59BAD84258A789A4D37F6FDB4B5E2CB431980B"
+  "sha256": "121050D4BC39384E857064070C0B2C47AD3D98EE45F6A61B6A4E6E837D155A82"
 }
