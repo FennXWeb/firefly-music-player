@@ -205,10 +205,7 @@ function adoptExternalArtworkReferences(saved){
   };
   visit(current,saved);
 }
-function saveLibrary() {
-  pruneEmptyAlbums();
-  syncShelves();
-  libraryRevision++;
+function persistCurrentState(delay=120) {
   localStateSavedAt=Date.now();
   const state = currentLibraryState();
   if (!window.firefly?.saveState) {
@@ -217,8 +214,14 @@ function saveLibrary() {
   }
   if (persistenceReady && window.firefly?.saveState) {
     clearTimeout(persistenceTimer);
-    persistenceTimer = setTimeout(() => window.firefly.saveState(state).then(result=>{if(result?.state)adoptExternalArtworkReferences(result.state);if(!legacyCacheRetired){try{localStorage.removeItem('firefly-library-v1');legacyCacheRetired=true}catch{}}}).catch(() => toast('Could not save library','Ignifire will retry after the next change.')), 120);
+    persistenceTimer = setTimeout(() => window.firefly.saveState(state).then(result=>{if(result?.state)adoptExternalArtworkReferences(result.state);if(!legacyCacheRetired){try{localStorage.removeItem('firefly-library-v1');legacyCacheRetired=true}catch{}}}).catch(() => toast('Could not save library','Ignifire will retry after the next change.')), delay);
   }
+}
+function saveLibrary() {
+  pruneEmptyAlbums();
+  syncShelves();
+  libraryRevision++;
+  persistCurrentState();
   renderSidebarPlaylists();
   scheduleDynamicViewRefresh();
 }
@@ -1645,10 +1648,10 @@ function installMediaSessionHandlers(){
   try{navigator.mediaSession.setActionHandler('seekbackward',details=>{if(currentTrack?.url&&audio.duration)audio.currentTime=Math.max(0,audio.currentTime-(details.seekOffset||10))});navigator.mediaSession.setActionHandler('seekforward',details=>{if(currentTrack?.url&&audio.duration)audio.currentTime=Math.min(audio.duration,audio.currentTime+(details.seekOffset||10))});navigator.mediaSession.setActionHandler('seekto',details=>{if(currentTrack?.url&&audio.duration&&Number.isFinite(details.seekTime))audio.currentTime=Math.max(0,Math.min(audio.duration,details.seekTime))})}catch{/* Seeking is optional on older Windows media surfaces. */}
 }
 function updateVolumeControls(){const slider=$('#volume'),button=$('#volumeMute');if(!slider||!button)return;setRange(slider,settings.volume);button.innerHTML=icon(settings.muted||settings.volume===0?'mute':'volume');button.classList.toggle('active',Boolean(settings.muted));button.setAttribute('aria-label',settings.muted?'Unmute':'Mute');button.title=button.getAttribute('aria-label')}
-function persistVolumeSoon(){clearTimeout(volumePersistenceTimer);volumePersistenceTimer=setTimeout(()=>saveLibrary(),350)}
+function persistVolumeSoon(){clearTimeout(volumePersistenceTimer);volumePersistenceTimer=setTimeout(()=>persistCurrentState(),350)}
 function setVolume(value){settings.volume=Math.max(0,Math.min(100,Number(value)||0));settings.muted=settings.volume===0;if(settings.volume>0)lastAudibleVolume=settings.volume;audio.volume=settings.muted?0:settings.volume/100;updateVolumeControls();persistVolumeSoon()}
 function updatePlaybackEnvelope(){if(!audio.duration||settings.muted)return;const fade=Math.max(0,Math.min(12,Number(settings.crossfade)||0)),remaining=audio.duration-audio.currentTime,gain=fade&&remaining<fade?Math.max(.18,remaining/fade):1;audio.volume=settings.volume/100*gain}
-function toggleMute(){settings.muted=!settings.muted;if(!settings.muted&&settings.volume===0)settings.volume=lastAudibleVolume||72;audio.volume=settings.muted?0:settings.volume/100;updateVolumeControls();saveLibrary();toast(settings.muted?'Muted':'Sound on')}
+function toggleMute(){settings.muted=!settings.muted;if(!settings.muted&&settings.volume===0)settings.volume=lastAudibleVolume||72;audio.volume=settings.muted?0:settings.volume/100;updateVolumeControls();persistCurrentState();toast(settings.muted?'Muted':'Sound on')}
 
 function videoFromUrl(resource){
   if(!resource)return null;
@@ -1894,7 +1897,7 @@ $('#playBtn').onclick=togglePlay;$('#fullPlay').onclick=togglePlay;$('#prevBtn')
 $('#queueButton').onclick=()=>$('#queuePanel').classList.contains('open')?closeQueue():openQueue();$('#closeQueue').onclick=closeQueue;$('#queueBackdrop').onclick=closeQueue;$('#clearQueue').onclick=clearPlaybackQueue;
 audio.onplay=()=>{audio.volume=settings.muted?0:settings.volume/100;setPlaying(true);commitPlayCount(currentTrack)};audio.onpause=()=>setPlaying(false);audio.onended=()=>nextTrack(1,{ended:true});audio.ontimeupdate=()=>{if(!audio.duration)return;const p=audio.currentTime/audio.duration*100;setRange($('#progress'),p);$('#elapsed').textContent=formatTime(audio.currentTime);$('#duration').textContent=formatTime(audio.duration);updatePlaybackEnvelope();updateLyricsPosition(audio.currentTime);if(Date.now()-lastDiscordProgressSync>15000){lastDiscordProgressSync=Date.now();syncNativePlaybackState()}};
 $('#progress').oninput=e=>{setRange(e.target,e.target.value);if(currentTrack?.url&&audio.duration)audio.currentTime=audio.duration*e.target.value/100;else simProgress=Number(e.target.value);syncNativePlaybackState()};
-$('#volume').oninput=e=>setVolume(e.target.value);$('#volume').onchange=()=>{clearTimeout(volumePersistenceTimer);saveLibrary()};$('#volumeMute').onclick=toggleMute;
+$('#volume').oninput=e=>setVolume(e.target.value);$('#volume').onchange=()=>{clearTimeout(volumePersistenceTimer);persistCurrentState()};$('#volumeMute').onclick=toggleMute;
 $('#favoriteTrack').onclick=()=>currentTrack?setTrackFavorite(currentTrack):toast('Nothing is playing');
 $('#nowPlaylistLink').onclick=event=>{event.stopPropagation();const id=event.currentTarget.dataset.playlistId;if(id)openPlaylist(id)};
 $('#shuffleBtn').onclick=()=>{setShuffleEnabled(!shuffleEnabled);toast(shuffleEnabled?'Shuffle on':'Shuffle off',shuffleEnabled?(playbackQueueExplicit?'The active queue was reshuffled.':'New collections will play in random order.'):'Collections will play in their listed order.')};$('#repeatBtn').onclick=cycleRepeatMode;
