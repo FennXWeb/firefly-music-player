@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('firefly', {
+  signalAppReady: () => ipcRenderer.send('app:renderer-ready'),
   chooseMusicFiles: () => ipcRenderer.invoke('library:choose-files'),
   chooseMusicFolder: () => ipcRenderer.invoke('library:choose-folder'),
   addLiveFolder: () => ipcRenderer.invoke('library:add-live-folder'),

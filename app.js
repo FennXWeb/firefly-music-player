@@ -1920,4 +1920,4 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){hideContextMenu();if(modalLayer.classList.contains('open'))closeModal();else if($('#fullscreenPlayer').classList.contains('open'))closeFullscreen();else if($('#queuePanel').classList.contains('open'))closeQueue();else if(selectedTrackIds.size||selectedAlbumIds.size)clearBulkSelection()}
 });
 
-initializePersistence();
+initializePersistence().catch(error=>console.error('Ignifire startup failed.',error)).finally(()=>window.firefly?.signalAppReady?.());

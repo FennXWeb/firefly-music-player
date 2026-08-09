@@ -55,6 +55,10 @@ let pendingCloudState = null;
 let cloudQuotaBlocked = false;
 let mediaOverlayWindow = null;
 let mediaOverlayTimer = null;
+let splashWindow = null;
+let splashStartedAt = 0;
+let splashFallbackTimer = null;
+let startupFinished = false;
 
 protocol.registerSchemesAsPrivileged([{
   scheme: 'ignifire-cloud',
@@ -102,6 +106,47 @@ function showMediaOverlay() {
   mediaOverlayWindow.setPosition(workArea.x + workArea.width - 406, workArea.y + workArea.height - 124, false);
   mediaOverlayWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).then(() => mediaOverlayWindow?.showInactive());
   clearTimeout(mediaOverlayTimer);mediaOverlayTimer = setTimeout(() => mediaOverlayWindow?.hide(), 2800);mediaOverlayTimer.unref?.();
+}
+function createSplashWindow() {
+  startupFinished = false;
+  splashStartedAt = Date.now();
+  splashWindow = new BrowserWindow({
+    width: 560,
+    height: 380,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    resizable: false,
+    movable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    show: false,
+    hasShadow: true,
+    icon: path.join(__dirname, 'assets', 'ignifire.ico'),
+    webPreferences: { contextIsolation: true, sandbox: true }
+  });
+  splashWindow.on('closed', () => { splashWindow = null; });
+  splashWindow.once('ready-to-show', () => splashWindow?.show());
+  splashWindow.loadFile('splash.html').catch(() => finishStartup());
+}
+function finishStartup(win = primaryWindow) {
+  if (startupFinished || !win || win.isDestroyed()) return;
+  startupFinished = true;
+  clearTimeout(splashFallbackTimer);
+  const delay = Math.max(0, 900 - (Date.now() - splashStartedAt));
+  setTimeout(() => {
+    if (win.isDestroyed()) return;
+    const splash = splashWindow;
+    if (!splash || splash.isDestroyed()) { win.show();win.focus();return; }
+    splash.webContents.executeJavaScript("document.body.classList.add('closing')").catch(() => {});
+    setTimeout(() => {
+      if (!win.isDestroyed()) { win.show();win.focus(); }
+      if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
+    }, 280);
+  }, delay);
 }
 function updateTaskbarControls(win = primaryWindow) {
   if (process.platform !== 'win32' || !win || win.isDestroyed()) return;
@@ -1100,6 +1145,7 @@ function createWindow() {
     minHeight: 680,
     icon: path.join(__dirname, 'assets', 'ignifire.ico'),
     backgroundColor: '#090909',
+    show: false,
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#09090900', symbolColor: '#8f8b86', height: 42 },
     webPreferences: { contextIsolation: true, sandbox: true, webviewTag: true, preload: path.join(__dirname, 'preload.js') }
@@ -1121,6 +1167,8 @@ function createWindow() {
     guest.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
   });
   win.loadFile('index.html');
+  splashFallbackTimer = setTimeout(() => finishStartup(win), 18000);
+  splashFallbackTimer.unref?.();
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
@@ -1187,6 +1235,10 @@ app.whenReady().then(() => {
     primaryWindow = win;
     updateTaskbarControls(win);
     updateDiscordPresence();
+  });
+  ipcMain.on('app:renderer-ready', event => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win && win === primaryWindow) finishStartup(win);
   });
   ipcMain.handle('discord:configure', async (event, config) => {
     const win = BrowserWindow.fromWebContents(event.sender);
@@ -1257,8 +1309,9 @@ app.whenReady().then(() => {
     await new Promise((resolve,reject)=>{const installer=spawn(preparedUpdate.filePath,['/S','--updated','--force-run'],{detached:true,windowsHide:true,stdio:'ignore'});installer.once('error',error=>reject(new Error(`The silent updater could not start: ${error.message}`)));installer.once('spawn',()=>{installer.unref();resolve()})});
     setTimeout(()=>app.exit(0),220);return true;
   });
+  createSplashWindow();
   createWindow();
-  app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow());
+  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) { createSplashWindow();createWindow(); } });
 });
-app.on('before-quit',()=>{clearTimeout(cloudSyncTimer);destroyDiscordClient('disabled');unregisterMediaHotkeys();for(const id of [...liveFolderWatchers.keys()])closeLiveFolderWatcher(id)});
+app.on('before-quit',()=>{clearTimeout(cloudSyncTimer);clearTimeout(splashFallbackTimer);destroyDiscordClient('disabled');unregisterMediaHotkeys();if(splashWindow&&!splashWindow.isDestroyed())splashWindow.destroy();for(const id of [...liveFolderWatchers.keys()])closeLiveFolderWatcher(id)});
 app.on('window-all-closed', () => process.platform !== 'darwin' && app.quit());

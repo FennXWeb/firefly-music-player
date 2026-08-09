@@ -1,16 +1,16 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.46",
-  "publishedAt": "2026-08-09T23:20:01.5511557Z",
+  "version": "0.1.47",
+  "publishedAt": "2026-08-09T23:32:47.5577327Z",
   "audience": "user",
   "highlights": [
-    "Windows media play, pause, next, previous, and stop keys now use Electron's valid native accelerator names.",
-    "Closing or restarting Ignifire no longer shows a JavaScript error from media-key cleanup.",
-    "Only successfully registered media shortcuts are removed during shutdown.",
-    "Native shortcut cleanup can no longer interrupt an update restart or normal exit."
+    "Ignifire now opens with a dedicated animated startup splash screen.",
+    "The desktop window remains hidden until the saved library, preferences, and first view are ready.",
+    "A smooth crossfade transitions from the Ignifire loading experience into the main app.",
+    "Startup includes a recovery timeout so an initialization problem can never leave the app invisible."
   ],
-  "notes": "Fixes the Windows main-process error caused by invalid media-key accelerator names and makes native shortcut cleanup safe during shutdown.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.46/Ignifire-0.1.46-Setup.exe",
-  "sha256": "2AFB05F8F22F2333F1E13F2A28B4F981B65C701DA44C7F4B6DF9B90EE233622F"
+  "notes": "Adds a polished animated Ignifire startup splash that stays visible until the renderer finishes loading durable state and its initial library view.",
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.47/Ignifire-0.1.47-Setup.exe",
+  "sha256": "556A189EEDFF50BD750EBB5DFE171E437410A9989C3023861BEE17EC74EA6196"
 }
