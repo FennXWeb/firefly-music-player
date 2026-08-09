@@ -2,7 +2,7 @@
   "channel": "beta",
   "branch": "beta",
   "version": "0.1.44",
-  "publishedAt": "2026-08-09T22:48:33.5314919Z",
+  "publishedAt": "2026-08-09T22:52:05.9263686Z",
   "audience": "user",
   "highlights": [
     "Cloud syncing no longer causes the active page to refresh repeatedly.",
@@ -12,5 +12,5 @@
   ],
   "notes": "Stops the cloud-sync feedback loop and updates visible cloud status in place so navigation, playback, and selection remain uninterrupted.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.44/Ignifire-0.1.44-Setup.exe",
-  "sha256": "EB4DC217D1010AF6FFE0A8D97064DEF6AE8BBAFEA871CC677DCA650146EFB154"
+  "sha256": "F91F07975BB0EAB78CD837D9B625C273047B33FCA218FB665C8373DF94BE43FB"
 }
