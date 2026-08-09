@@ -1,16 +1,16 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.43",
-  "publishedAt": "2026-08-09T03:56:50.7664443Z",
+  "version": "0.1.44",
+  "publishedAt": "2026-08-09T22:48:33.5314919Z",
   "audience": "user",
   "highlights": [
-    "Large libraries no longer trigger desktop cache warnings or duplicate themselves into browser storage.",
-    "Embedded cover, case, playlist, and artist artwork now moves into durable managed artwork files.",
-    "Cloud indicators appear progressively as each track finishes uploading instead of waiting for the entire library.",
-    "Partial albums show clear sync progress, and Account settings now displays the live track count."
+    "Cloud syncing no longer causes the active page to refresh repeatedly.",
+    "Track and album cloud badges now update in place while uploads continue.",
+    "Repeated sync results are ignored when the saved cloud metadata has not changed.",
+    "Account sync progress stays live without rebuilding the Settings page for every uploaded track."
   ],
-  "notes": "Fixes oversized desktop caching, externalizes embedded artwork into durable managed files, and adds progressive cloud-track and album sync indicators with live upload progress.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.43/Ignifire-0.1.43-Setup.exe",
-  "sha256": "D210B8EF3975F042ED61C526E2DC38912A6B57124914C9E522CD3F85A08C3F1C"
+  "notes": "Stops the cloud-sync feedback loop and updates visible cloud status in place so navigation, playback, and selection remain uninterrupted.",
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.44/Ignifire-0.1.44-Setup.exe",
+  "sha256": "EB4DC217D1010AF6FFE0A8D97064DEF6AE8BBAFEA871CC677DCA650146EFB154"
 }
