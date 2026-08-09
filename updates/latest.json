@@ -2,8 +2,8 @@
   "channel": "beta",
   "branch": "beta",
   "version": "0.1.40",
-  "publishedAt": "2026-08-09T02:13:45.9155886Z",
+  "publishedAt": "2026-08-09T02:37:28.7838527Z",
   "notes": "Adds the secure, read-only Ignifire web player backend and production web bundle for ignifire.app, including required login, cloud audio streaming, a reduced library UI, and a stable desktop download link.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.39/Ignifire-0.1.39-Setup.exe",
-  "sha256": "0E1617B0381220ED376D858B58EEBB74647AA429E3FF7888917795FE0CB50BD0"
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.40/Ignifire-0.1.40-Setup.exe",
+  "sha256": "9D8122AF450302720F8EE5DC4C46EB437321E7DD6EBF0F8BF8C6B769E59F3638"
 }
