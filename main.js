@@ -9,11 +9,14 @@ const AdmZip = require('adm-zip');
 const DiscordRPC = require('discord-rpc');
 
 // Keep user content completely separate from the portable executable and its
-// temporary extraction directory. This path is stable across Firefly upgrades.
+// temporary extraction directory. This path is stable across Ignifire upgrades.
 // Retain the original profile directory so the first durable-data build can
 // migrate the user's existing localStorage library in place.
-const persistentRoot = process.env.FIREFLY_DATA_ROOT
-  ? path.resolve(process.env.FIREFLY_DATA_ROOT)
+const configuredDataRoot = process.env.IGNIFIRE_DATA_ROOT || process.env.FIREFLY_DATA_ROOT;
+// Keep the legacy on-disk directory so upgrading users retain every library,
+// credential, downloaded update, and generated asset after the rebrand.
+const persistentRoot = configuredDataRoot
+  ? path.resolve(configuredDataRoot)
   : path.join(app.getPath('appData'), 'firefly-music');
 app.setPath('userData', persistentRoot);
 const dataDirectory = path.join(persistentRoot, 'Data');
@@ -30,7 +33,7 @@ const cloudCacheDirectory = path.join(dataDirectory, 'cloud-library');
 const apiPassBaseUrl = 'https://api.apipass.dev';
 const updateRepository = 'FennXWeb/firefly-music-player';
 const updateBranches = { stable: 'main', beta: 'beta' };
-const fireflyDiscordApplicationId = '1535771097595777104';
+const ignifireDiscordApplicationId = '1535771097595777104';
 let preparedUpdate = null;
 let primaryWindow = null;
 let nativePlaybackState = { playing: false, hasTrack: false, title: '', artist: '', album: '', durationSeconds: 0, positionSeconds: 0, artworkUrl: '' };
@@ -78,7 +81,7 @@ function updateTaskbarControls(win = primaryWindow) {
     { tooltip: nativePlaybackState.playing ? 'Pause' : 'Play', icon: taskbarIcon(nativePlaybackState.playing ? 'pause' : 'play'), flags: enabled, click: () => sendMediaCommand('toggle', win) },
     { tooltip: 'Next track', icon: taskbarIcon('next'), flags: enabled, click: () => sendMediaCommand('next', win) }
   ]);
-  const details = nativePlaybackState.hasTrack ? `${nativePlaybackState.title}${nativePlaybackState.artist ? ` — ${nativePlaybackState.artist}` : ''}` : 'Firefly';
+  const details = nativePlaybackState.hasTrack ? `${nativePlaybackState.title}${nativePlaybackState.artist ? ` — ${nativePlaybackState.artist}` : ''}` : 'Ignifire';
   win.setThumbnailToolTip(details);
 }
 function registerMediaHotkeys() {
@@ -130,7 +133,7 @@ function discordActivity() {
   const title = nativePlaybackState.title || 'Unknown track';
   const artist = nativePlaybackState.artist || 'Unknown artist';
   const activity = {
-    details: discordConfig.showTrack ? title.slice(0, 128) : (nativePlaybackState.playing ? 'Listening in Firefly' : 'Paused in Firefly'),
+    details: discordConfig.showTrack ? title.slice(0, 128) : (nativePlaybackState.playing ? 'Listening in Ignifire' : 'Paused in Ignifire'),
     state: (discordConfig.showAlbum && nativePlaybackState.album ? `${artist} — ${nativePlaybackState.album}` : artist).slice(0, 128),
     instance: false
   };
@@ -139,9 +142,9 @@ function discordActivity() {
   const externalArtwork = discordConfig.shareArtwork && /^https:\/\//i.test(nativePlaybackState.artworkUrl) ? nativePlaybackState.artworkUrl : '';
   if (externalArtwork) {
     activity.largeImageKey = externalArtwork;
-    activity.largeImageText = `${nativePlaybackState.album || title} · Firefly`.slice(0, 128);
+    activity.largeImageText = `${nativePlaybackState.album || title} · Ignifire`.slice(0, 128);
   }
-  if (discordConfig.showButton) activity.buttons = [{ label: 'Get Firefly', url: 'https://github.com/FennXWeb/firefly-music-player' }];
+  if (discordConfig.showButton) activity.buttons = [{ label: 'Get Ignifire', url: 'https://github.com/FennXWeb/firefly-music-player' }];
   return activity;
 }
 async function updateDiscordPresence(force = false) {
@@ -162,7 +165,7 @@ async function updateDiscordPresence(force = false) {
 async function connectDiscord(nextConfig) {
   if (nextConfig) discordConfig = cleanDiscordConfig(nextConfig);
   if (!discordConfig.enabled) return destroyDiscordClient('disabled');
-  if (discordClient && discordClientId === fireflyDiscordApplicationId && discordStatus.status === 'connected') {
+  if (discordClient && discordClientId === ignifireDiscordApplicationId && discordStatus.status === 'connected') {
     await updateDiscordPresence(true);
     return discordStatus;
   }
@@ -170,7 +173,7 @@ async function connectDiscord(nextConfig) {
   const token = discordConnectionToken;
   const client = new DiscordRPC.Client({ transport: 'ipc' });
   discordClient = client;
-  discordClientId = fireflyDiscordApplicationId;
+  discordClientId = ignifireDiscordApplicationId;
   const disconnect = () => {
     if (discordClient !== client || token !== discordConnectionToken) return;
     discordClient = null;
@@ -182,7 +185,7 @@ async function connectDiscord(nextConfig) {
   client.on('disconnected', disconnect);
   client.on('error', disconnect);
   try {
-    await client.login({ clientId: fireflyDiscordApplicationId });
+    await client.login({ clientId: ignifireDiscordApplicationId });
     if (discordClient !== client || token !== discordConnectionToken) return discordStatus;
     sendDiscordStatus('connected');
     await updateDiscordPresence(true);
@@ -258,9 +261,9 @@ async function updateAccountCredentials({ token, endpoint } = {}) {
 async function accountRequest(resource, options = {}) {
   const stored = await accountCredentials(), endpoint = normalizedAccountEndpoint(options.endpoint || stored.endpoint);
   const token = options.token ?? stored.token;
-  if (!endpoint) throw new Error('Set the Firefly account server address first.');
+  if (!endpoint) throw new Error('Set the Ignifire account server address first.');
   const { endpoint: _endpoint, token: _token, headers: requestedHeaders, ...requestOptions } = options;
-  const headers = { Accept: 'application/json', 'User-Agent': `Firefly/${app.getVersion()}`, ...(requestedHeaders || {}) };
+  const headers = { Accept: 'application/json', 'User-Agent': `Ignifire/${app.getVersion()}`, ...(requestedHeaders || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
   const response = await net.fetch(`${endpoint}${resource}`, { ...requestOptions, headers });
   if (!response.ok) {
@@ -289,7 +292,7 @@ async function uploadCloudObject(filePath, endpoint, token) {
   const existing = await accountRequest(`/v1/sync/objects/${hash}`, { method: 'HEAD', endpoint, token }).catch(error => error.status === 404 ? null : Promise.reject(error));
   if (!existing) {
     const body = await fs.readFile(filePath);
-    await accountRequest(`/v1/sync/objects/${hash}`, { method: 'PUT', endpoint, token, body, headers: { 'Content-Type': 'application/octet-stream', 'X-Firefly-Filename': encodedName } });
+    await accountRequest(`/v1/sync/objects/${hash}`, { method: 'PUT', endpoint, token, body, headers: { 'Content-Type': 'application/octet-stream', 'X-Ignifire-Filename': encodedName, 'X-Firefly-Filename': encodedName } });
   }
   return { hash, name, size: stats.size };
 }
@@ -374,7 +377,7 @@ function allowedUpdateUrl(value='') {
 async function checkForUpdates(channel='stable') {
   const selected=channel==='beta'?'beta':'stable',branch=updateBranches[selected];
   const manifestUrl=`https://raw.githubusercontent.com/${updateRepository}/${branch}/updates/latest.json?t=${Date.now()}`;
-  const response=await net.fetch(manifestUrl,{headers:{Accept:'application/json','User-Agent':`Firefly/${app.getVersion()}`}});
+  const response=await net.fetch(manifestUrl,{headers:{Accept:'application/json','User-Agent':`Ignifire/${app.getVersion()}`}});
   if(!response.ok)throw new Error(response.status===404?'This update channel has not been published yet.':`Update server returned ${response.status}.`);
   const manifest=await response.json();
   if(!manifest||typeof manifest.version!=='string')throw new Error('The update manifest is invalid.');
@@ -383,12 +386,12 @@ async function checkForUpdates(channel='stable') {
 }
 async function downloadUpdate(webContents,channel='stable') {
   const update=await checkForUpdates(channel);
-  if(!update.available)throw new Error('Firefly is already up to date.');
+  if(!update.available)throw new Error('Ignifire is already up to date.');
   if(!update.downloadUrl)throw new Error('This update is announced, but its Windows download is not published yet.');
-  const response=await net.fetch(update.downloadUrl,{headers:{'User-Agent':`Firefly/${app.getVersion()}`}});
+  const response=await net.fetch(update.downloadUrl,{headers:{'User-Agent':`Ignifire/${app.getVersion()}`}});
   if(!response.ok||!response.body)throw new Error(`Update download returned ${response.status}.`);
   await fs.mkdir(updatesDirectory,{recursive:true});
-  const finalPath=path.join(updatesDirectory,`Firefly-${safeFileStem(update.version)}-Setup.exe`),temporaryPath=`${finalPath}.download`;
+  const finalPath=path.join(updatesDirectory,`Ignifire-${safeFileStem(update.version)}-Setup.exe`),temporaryPath=`${finalPath}.download`;
   const handle=await fs.open(temporaryPath,'w'),reader=response.body.getReader(),hash=crypto.createHash('sha256'),total=Number(response.headers.get('content-length'))||0;let received=0;
   try{while(true){const{done,value}=await reader.read();if(done)break;const chunk=Buffer.from(value);await handle.write(chunk);hash.update(chunk);received+=chunk.length;if(!webContents.isDestroyed())webContents.send('update:progress',{stage:'downloading',received,total,percent:total?Math.round(received/total*100):null})}}catch(error){await handle.close();await fs.rm(temporaryPath,{force:true});throw error}
   await handle.close();
@@ -469,7 +472,7 @@ async function generateDynamicCaseArt(options = {}) {
   const imageUrl = await imageSourceAsDataUrl(options.frontCover);
   const imageMatch = imageUrl.match(/^data:(image\/(?:png|jpe?g|webp));base64,(.+)$/i);
   if (!imageMatch) throw new Error('The front cover could not be prepared for image generation.');
-  const prompt = `Create professional print-ready back and spine artwork for the album "${String(options.title || '').slice(0, 180)}" by "${String(options.artist || '').slice(0, 180)}". Use the supplied front cover only as the visual reference. Extend its palette, texture, lighting, illustration language, and era into a landscape back-cover composition. Keep a calm, readable negative-space region across the center-left for a tracklist that Firefly will overlay later. Reserve exactly the far-right 8.33% of the canvas (128 pixels of the 1536-pixel width) as a coordinated vertical spine strip, separated cleanly from the back panel and filled edge-to-edge with continuous artwork. ABSOLUTELY NO text, letters, numbers, logos, track names, barcodes, legal copy, or typography anywhere in the generated image. Do not place a CD, jewel case mockup, hands, room, or product photography in the scene. Output only the flat artwork. Genre context: ${String(options.genre || 'unspecified').slice(0, 100)}.`;
+  const prompt = `Create professional print-ready back and spine artwork for the album "${String(options.title || '').slice(0, 180)}" by "${String(options.artist || '').slice(0, 180)}". Use the supplied front cover only as the visual reference. Extend its palette, texture, lighting, illustration language, and era into a landscape back-cover composition. Keep a calm, readable negative-space region across the center-left for a tracklist that Ignifire will overlay later. Reserve exactly the far-right 8.33% of the canvas (128 pixels of the 1536-pixel width) as a coordinated vertical spine strip, separated cleanly from the back panel and filled edge-to-edge with continuous artwork. ABSOLUTELY NO text, letters, numbers, logos, track names, barcodes, legal copy, or typography anywhere in the generated image. Do not place a CD, jewel case mockup, hands, room, or product photography in the scene. Output only the flat artwork. Genre context: ${String(options.genre || 'unspecified').slice(0, 100)}.`;
   const form = new FormData();
   form.append('model', 'gpt-image-2');
   form.append('image[]', new Blob([Buffer.from(imageMatch[2], 'base64')], { type: imageMatch[1] }), `front-cover.${imageMatch[1].includes('jpeg') ? 'jpg' : imageMatch[1].split('/')[1]}`);
@@ -496,7 +499,7 @@ async function cacheArtistImage(options = {}) {
   const source = new URL(options.url || '');
   const host = source.hostname.toLowerCase();
   const allowed = host === 'wikimedia.org' || host.endsWith('.wikimedia.org') || host === 'cdn-images.dzcdn.net' || host === 'r2.theaudiodb.com' || host === 'theaudiodb.com' || host.endsWith('.theaudiodb.com') || /^media\d*\.giphy\.com$/.test(host) || host === 'i.giphy.com' || host === 'media.tenor.com';
-  if (source.protocol !== 'https:' || !allowed) throw new Error('This artist-image source is not trusted by Firefly.');
+  if (source.protocol !== 'https:' || !allowed) throw new Error('This artist-image source is not trusted by Ignifire.');
   const response = await net.fetch(source.href);
   if (!response.ok) throw new Error(`Artist image download failed (${response.status}).`);
   const contentType = response.headers.get('content-type')?.split(';')[0]?.toLowerCase() || '';
@@ -511,7 +514,7 @@ async function cacheArtistImage(options = {}) {
 async function fetchArtistJson(url) {
   const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 8500);
   try {
-    const response = await net.fetch(url, { signal: controller.signal, headers: { Accept: 'application/json', 'User-Agent': `Firefly/${app.getVersion()}` } });
+    const response = await net.fetch(url, { signal: controller.signal, headers: { Accept: 'application/json', 'User-Agent': `Ignifire/${app.getVersion()}` } });
     if (!response.ok) throw new Error(`Artist source returned ${response.status}.`);
     return await response.json();
   } finally { clearTimeout(timeout); }
@@ -533,7 +536,7 @@ async function fetchGiphySearch(query,retry=true){
   if(!giphyFrontendApiKey)await refreshGiphyFrontendApiKey();
   const url=new URL('https://api.giphy.com/v1/gifs/search');url.search=new URLSearchParams({api_key:giphyFrontendApiKey,q:query,limit:'25',offset:'0',rating:'pg-13',lang:'en',bundle:'messaging_non_clips'});
   const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),10000);
-  try{const response=await net.fetch(url.href,{signal:controller.signal,headers:{Accept:'application/json','User-Agent':`Firefly/${app.getVersion()}`}});if((response.status===401||response.status===403)&&retry){await refreshGiphyFrontendApiKey();return fetchGiphySearch(query,false)}if(!response.ok)throw new Error(`GIPHY search returned ${response.status}.`);const body=await response.json();return Array.isArray(body?.data)?body.data:[]}
+  try{const response=await net.fetch(url.href,{signal:controller.signal,headers:{Accept:'application/json','User-Agent':`Ignifire/${app.getVersion()}`}});if((response.status===401||response.status===403)&&retry){await refreshGiphyFrontendApiKey();return fetchGiphySearch(query,false)}if(!response.ok)throw new Error(`GIPHY search returned ${response.status}.`);const body=await response.json();return Array.isArray(body?.data)?body.data:[]}
   finally{clearTimeout(timeout)}
 }
 async function searchGiphyArtistImages(artist=''){
@@ -630,7 +633,7 @@ async function testSunoConnection() {
   const savedCredentials = await readJson(credentialsPath, {});
   const apiKey = decryptSecret(savedCredentials.sunoToken);
   if (!apiKey) throw new Error('Enter an ApiPass API key.');
-  const response = await net.fetch(`${apiPassBaseUrl}/api/v1/jobs/recordInfo?taskId=firefly_connection_check`, { headers: { Accept: 'application/json', Authorization: `Bearer ${apiKey}` } });
+  const response = await net.fetch(`${apiPassBaseUrl}/api/v1/jobs/recordInfo?taskId=ignifire_connection_check`, { headers: { Accept: 'application/json', Authorization: `Bearer ${apiKey}` } });
   const body = await response.json().catch(() => ({}));
   if (response.status === 401 || response.status === 403 || body?.code === 401 || body?.code === 403) throw new Error('ApiPass rejected this API key. Check the key and try again.');
   if (response.status >= 500) throw new Error('ApiPass is temporarily unavailable. Try again shortly.');
@@ -734,7 +737,7 @@ async function lookupLyrics(options = {}) {
   const album = String(options.album || '').trim();
   const duration = Math.max(0, Math.round(Number(options.duration) || 0));
   if (!title || !artist) throw new Error('A song title and artist are required to find lyrics.');
-  const headers = { Accept: 'application/json', 'User-Agent': 'Firefly Music Player/0.1.20 (https://github.com/FennXWeb/firefly-music-player)' };
+  const headers = { Accept: 'application/json', 'User-Agent': `Ignifire/${app.getVersion()} (https://github.com/FennXWeb/firefly-music-player)` };
   const exact = new URL('https://lrclib.net/api/get');
   exact.searchParams.set('track_name', title);
   exact.searchParams.set('artist_name', artist);
@@ -904,9 +907,9 @@ async function importZipArchive(archivePath) {
   const archive=new AdmZip(archivePath),entries=archive.getEntries();
   const usable=entries.filter(entry=>!entry.isDirectory&&(audioExtensions.has(path.extname(entry.entryName).toLowerCase())||imageExtensions.has(path.extname(entry.entryName).toLowerCase())));
   if(!usable.length)throw new Error('This ZIP does not contain supported music files.');
-  if(usable.some(entry=>(Number(entry.header?.size)||0)>2*1024*1024*1024))throw new Error('A file inside this ZIP exceeds Firefly’s 2 GB per-file import limit.');
+  if(usable.some(entry=>(Number(entry.header?.size)||0)>2*1024*1024*1024))throw new Error('A file inside this ZIP exceeds Ignifire’s 2 GB per-file import limit.');
   const totalBytes=usable.reduce((sum,entry)=>sum+(Number(entry.header?.size)||0),0);
-  if(totalBytes>8*1024*1024*1024)throw new Error('This ZIP expands beyond Firefly’s 8 GB import limit.');
+  if(totalBytes>8*1024*1024*1024)throw new Error('This ZIP expands beyond Ignifire’s 8 GB import limit.');
   const archiveName=path.basename(archivePath,path.extname(archivePath));
   const safeName=archiveName.replace(/[^a-z0-9._-]+/gi,'-').replace(/^-+|-+$/g,'').slice(0,70)||'music';
   const root=path.join(zipImportDirectory,`${safeName}-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`);
@@ -929,7 +932,7 @@ function createWindow() {
     height: 940,
     minWidth: 980,
     minHeight: 680,
-    icon: path.join(__dirname, 'assets', 'firefly.ico'),
+    icon: path.join(__dirname, 'assets', 'ignifire.ico'),
     backgroundColor: '#090909',
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#09090900', symbolColor: '#8f8b86', height: 42 },
@@ -959,11 +962,13 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // Retain the original Windows identity so the Ignifire installer upgrades
+  // the existing application instead of creating a second installation.
   if (process.platform === 'win32') app.setAppUserModelId('com.firefly.music');
   registerMediaHotkeys();
   session.defaultSession.webRequest.onBeforeSendHeaders(
     { urls: ['https://www.youtube.com/embed/*'] },
-    (details, callback) => callback({ requestHeaders: { ...details.requestHeaders, Referer: 'https://firefly.local/' } })
+    (details, callback) => callback({ requestHeaders: { ...details.requestHeaders, Referer: 'https://ignifire.local/' } })
   );
   ipcMain.handle('state:load', async () => ({
     state: await readJson(statePath, null),
@@ -1014,7 +1019,7 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('account:status', async (_event, endpoint) => accountStatus(endpoint));
   ipcMain.handle('account:open', async (_event, options = {}) => {
-    const endpoint = normalizedAccountEndpoint(options.endpoint);if (!endpoint) throw new Error('Enter the HTTPS address for your Firefly account server.');
+    const endpoint = normalizedAccountEndpoint(options.endpoint);if (!endpoint) throw new Error('Enter the HTTPS address for your Ignifire account server.');
     await updateAccountCredentials({ endpoint });
     const mode = ['signin','signup','passkeys'].includes(options.mode) ? options.mode : 'signin';
     await shell.openExternal(`${endpoint}/account?desktop=1&mode=${mode}`);return true;

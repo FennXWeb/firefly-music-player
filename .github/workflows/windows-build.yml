@@ -29,9 +29,9 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content package.json | ConvertFrom-Json).version
-          $installer = "Firefly-$version-Setup.exe"
-          $portable = "Firefly-$version-Portable.exe"
-          $cloudServer = "Firefly-Cloud-Server-$version.zip"
+          $installer = "Ignifire-$version-Setup.exe"
+          $portable = "Ignifire-$version-Portable.exe"
+          $cloudServer = "Ignifire-Cloud-Server-$version.zip"
           tar -a -cf "release/$cloudServer" -C cloud-server package.json package-lock.json .env.example README.md schema.sql src web public
           $hash = (Get-FileHash "release/$installer" -Algorithm SHA256).Hash
           "version=$version" >> $env:GITHUB_OUTPUT
@@ -41,7 +41,7 @@ jobs:
           "sha256=$hash" >> $env:GITHUB_OUTPUT
       - uses: actions/upload-artifact@v4
         with:
-          name: Firefly-Windows-Beta
+          name: Ignifire-Windows-Beta
           path: |
             release/${{ steps.build.outputs.installer }}
             release/${{ steps.build.outputs.portable }}
@@ -50,7 +50,7 @@ jobs:
         with:
           tag_name: beta-v${{ steps.build.outputs.version }}
           target_commitish: beta
-          name: Firefly ${{ steps.build.outputs.version }} Beta
+          name: Ignifire ${{ steps.build.outputs.version }} Beta
           prerelease: true
           make_latest: false
           files: |

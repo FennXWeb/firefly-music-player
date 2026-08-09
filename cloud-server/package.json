@@ -1,6 +1,6 @@
 {
-  "name": "firefly-cloud-server",
-  "version": "0.1.0",
+  "name": "ignifire-cloud-server",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "engines": { "node": ">=20" },
@@ -21,6 +21,7 @@
     "helmet": "^8.1.0",
     "mysql2": "^3.23.2",
     "nodemailer": "^9.0.5",
-    "twilio": "^6.0.2"
+    "twilio": "^6.0.2",
+    "@supabase/supabase-js": "^2.0.0"
   }
 }

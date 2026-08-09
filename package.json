@@ -1,9 +1,9 @@
 {
-  "name": "firefly-music",
-  "version": "0.1.34",
+  "name": "ignifire-music",
+  "version": "0.1.35",
   "private": true,
   "description": "A highly customizable, local-first music player for Windows.",
-  "author": "Firefly",
+  "author": "Ignifire",
   "license": "MIT",
   "main": "main.js",
   "scripts": {
@@ -19,7 +19,7 @@
   },
   "build": {
     "appId": "com.firefly.music",
-    "productName": "Firefly",
+    "productName": "Ignifire",
     "asar": true,
     "npmRebuild": false,
     "directories": {
@@ -35,27 +35,28 @@
       "package.json"
     ],
     "win": {
-      "icon": "assets/firefly.ico",
+      "icon": "assets/ignifire.ico",
       "target": [
         "nsis",
         "portable"
       ]
     },
     "nsis": {
-      "artifactName": "Firefly-${version}-Setup.exe",
+      "artifactName": "Ignifire-${version}-Setup.exe",
+      "include": "build/installer.nsh",
       "oneClick": false,
       "allowElevation": true,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Firefly",
-      "uninstallDisplayName": "Firefly ${version}",
+      "shortcutName": "Ignifire",
+      "uninstallDisplayName": "Ignifire ${version}",
       "deleteAppDataOnUninstall": false,
       "runAfterFinish": true
     },
     "portable": {
-      "artifactName": "Firefly-${version}-Portable.exe",
+      "artifactName": "Ignifire-${version}-Portable.exe",
       "requestExecutionLevel": "user"
     }
   },

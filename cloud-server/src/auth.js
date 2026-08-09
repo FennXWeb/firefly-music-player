@@ -21,7 +21,7 @@ export const pool = mysql.createPool({
 });
 
 export const auth = betterAuth({
-  appName: 'Firefly',
+  appName: 'Ignifire',
   baseURL: publicURL,
   secret: process.env.BETTER_AUTH_SECRET,
   database: pool,
@@ -60,10 +60,10 @@ export const auth = betterAuth({
       sendOTP({ phoneNumber: destination, code }) { void sendAccountSms({ to: destination, code }).catch(error => console.error('SMS delivery failed:', error.message)); },
       sendPasswordResetOTP({ phoneNumber: destination, code }) { void sendAccountSms({ to: destination, code }).catch(error => console.error('SMS delivery failed:', error.message)); },
       signUpOnVerification: {
-        getTempEmail(number) { return `${crypto.createHash('sha256').update(number).digest('hex').slice(0, 32)}@phone.firefly.invalid`; },
+        getTempEmail(number) { return `${crypto.createHash('sha256').update(number).digest('hex').slice(0, 32)}@phone.ignifire.invalid`; },
         getTempName(number) { return `Listener ${number.slice(-4)}`; }
       }
     }),
-    passkey({ rpID, rpName: 'Firefly', origin: publicURL })
+    passkey({ rpID, rpName: 'Ignifire', origin: publicURL })
   ]
 });

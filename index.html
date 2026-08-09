@@ -4,7 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#090909" />
-  <title>Firefly — Your music, illuminated</title>
+  <title>Ignifire — Set your music alight</title>
+  <link rel="icon" type="image/png" href="assets/ignifire-logo.png" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -40,14 +41,14 @@
   <div class="ambient"><i></i><i></i><i></i></div>
   <div class="app-shell">
     <aside class="sidebar">
-      <button class="brand" id="brandHome" aria-label="Open Firefly Home">
-        <span class="brand-firefly" aria-hidden="true">
-          <img class="firefly-layer firefly-left-wing" src="assets/firefly-logo.png" alt="">
-          <img class="firefly-layer firefly-right-wing" src="assets/firefly-logo.png" alt="">
-          <img class="firefly-layer firefly-body" src="assets/firefly-logo.png" alt="">
-          <i class="firefly-aura"></i>
+      <button class="brand" id="brandHome" aria-label="Open Ignifire Home">
+        <span class="brand-ignifire" aria-hidden="true">
+          <i class="ignifire-aura"></i>
+          <img class="ignifire-mark" src="assets/ignifire-logo.png" alt="">
+          <img class="ignifire-pulse" src="assets/ignifire-logo.png" alt="">
+          <i class="ignifire-spark"></i>
         </span>
-        <span>firefly</span>
+        <span>ignifire</span>
       </button>
       <nav class="nav-primary" id="primaryNav">
         <button class="active" data-view="home"><svg><use href="#i-home"/></svg><span>Home</span></button>
@@ -83,7 +84,7 @@
 
   <footer class="player" id="player">
     <div class="now-playing" title="Right-click for track options">
-      <div class="now-cover empty-cover"><img class="firefly-logo-static" src="assets/firefly-logo.png" alt=""></div>
+      <div class="now-cover empty-cover"><img class="ignifire-logo-static" src="assets/ignifire-logo.png" alt=""></div>
       <div><strong id="nowTitle">Nothing playing</strong><span id="nowArtist">Import music to begin</span></div>
       <button class="love" id="favoriteTrack" aria-label="Favorite current track" aria-pressed="false">♥</button>
     </div>
@@ -129,7 +130,7 @@
     <button class="close-full" id="closeFull"><svg><use href="#i-close"/></svg></button>
     <div class="full-mode"><button class="active" data-mode="visualizer">Visualizer</button><button data-mode="video">Music video</button><button data-mode="lyrics">Lyrics</button></div>
     <div class="visualizer-picker" aria-label="Visualizer style"><button class="active" data-visualizer="waves">Aurora waves</button><button data-visualizer="orbit">Pulse orbit</button><button data-visualizer="spectrum">Prism spectrum</button></div>
-    <div class="full-meta"><div class="now-cover empty-cover"><img class="firefly-logo-static" src="assets/firefly-logo.png" alt=""></div><div><small>NOW PLAYING</small><h1 id="fullTitle">Nothing playing</h1><p id="fullArtist">Import music to begin</p></div></div>
+    <div class="full-meta"><div class="now-cover empty-cover"><img class="ignifire-logo-static" src="assets/ignifire-logo.png" alt=""></div><div><small>NOW PLAYING</small><h1 id="fullTitle">Nothing playing</h1><p id="fullArtist">Import music to begin</p></div></div>
     <div class="full-controls"><button id="fullPrev"><svg><use href="#i-prev"/></svg></button><button class="play-main" id="fullPlay"><svg><use href="#i-play"/></svg></button><button id="fullNext"><svg><use href="#i-next"/></svg></button></div>
   </div>
   <div class="toast-region" id="toasts"></div>
