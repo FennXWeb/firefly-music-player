@@ -69,11 +69,12 @@ const taskbarIconData = {
 };
 const taskbarIcons = {};
 const mediaAccelerators = new Map([
-  ['Media Play/Pause', 'toggle'],
-  ['Media Next Track', 'next'],
-  ['Media Previous Track', 'previous'],
-  ['Media Stop', 'stop']
+  ['MediaPlayPause', 'toggle'],
+  ['MediaNextTrack', 'next'],
+  ['MediaPreviousTrack', 'previous'],
+  ['MediaStop', 'stop']
 ]);
+const registeredMediaAccelerators = new Set();
 
 function taskbarIcon(name) {
   taskbarIcons[name] ||= nativeImage.createFromBuffer(Buffer.from(taskbarIconData[name], 'base64'));
@@ -115,9 +116,16 @@ function updateTaskbarControls(win = primaryWindow) {
 }
 function registerMediaHotkeys() {
   for (const [accelerator, command] of mediaAccelerators) {
-    try { globalShortcut.register(accelerator, () => sendMediaCommand(command)); }
+    try { if (globalShortcut.register(accelerator, () => sendMediaCommand(command))) registeredMediaAccelerators.add(accelerator); }
     catch { /* Some keyboards or Windows utilities reserve individual media keys. */ }
   }
+}
+function unregisterMediaHotkeys() {
+  for (const accelerator of registeredMediaAccelerators) {
+    try { globalShortcut.unregister(accelerator); }
+    catch { /* Native shortcut cleanup must never interrupt app shutdown. */ }
+  }
+  registeredMediaAccelerators.clear();
 }
 
 function cleanDiscordConfig(value = {}) {
@@ -1252,5 +1260,5 @@ app.whenReady().then(() => {
   createWindow();
   app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow());
 });
-app.on('before-quit',()=>{clearTimeout(cloudSyncTimer);destroyDiscordClient('disabled');for(const accelerator of mediaAccelerators.keys())globalShortcut.unregister(accelerator);for(const id of [...liveFolderWatchers.keys()])closeLiveFolderWatcher(id)});
+app.on('before-quit',()=>{clearTimeout(cloudSyncTimer);destroyDiscordClient('disabled');unregisterMediaHotkeys();for(const id of [...liveFolderWatchers.keys()])closeLiveFolderWatcher(id)});
 app.on('window-all-closed', () => process.platform !== 'darwin' && app.quit());

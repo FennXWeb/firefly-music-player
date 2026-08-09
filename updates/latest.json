@@ -1,16 +1,16 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.45",
-  "publishedAt": "2026-08-09T23:08:42.2079918Z",
+  "version": "0.1.46",
+  "publishedAt": "2026-08-09T23:16:54.1583449Z",
   "audience": "user",
   "highlights": [
-    "Changing the volume no longer refreshes the active page.",
-    "Volume and mute preferences still save automatically without interrupting navigation.",
-    "Slider movement no longer resets scroll position or active selections.",
-    "Playback remains uninterrupted while volume changes are persisted in the background."
+    "Windows media play, pause, next, previous, and stop keys now use Electron's valid native accelerator names.",
+    "Closing or restarting Ignifire no longer shows a JavaScript error from media-key cleanup.",
+    "Only successfully registered media shortcuts are removed during shutdown.",
+    "Native shortcut cleanup can no longer interrupt an update restart or normal exit."
   ],
-  "notes": "Separates volume persistence from library rendering so volume and mute changes save quietly without refreshing the current view.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.45/Ignifire-0.1.45-Setup.exe",
-  "sha256": "121050D4BC39384E857064070C0B2C47AD3D98EE45F6A61B6A4E6E837D155A82"
+  "notes": "Fixes the Windows main-process error caused by invalid media-key accelerator names and makes native shortcut cleanup safe during shutdown.",
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.46/Ignifire-0.1.46-Setup.exe",
+  "sha256": "85EDAA853D07FD7797AF52F9616C8953112C80A3F38957DAD5D30EA157C0387F"
 }
