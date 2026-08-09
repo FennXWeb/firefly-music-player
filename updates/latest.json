@@ -1,9 +1,9 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.35",
-  "publishedAt": "2026-08-09T00:28:35.6148877Z",
+  "version": "0.1.36",
+  "publishedAt": "2026-08-09T00:42:59.0889825Z",
   "notes": "Fixes Supabase setup by replacing the legacy MySQL schema and runtime with PostgreSQL-native tables, queries, transactions, timestamps, and upserts. Adds RLS protection for Ignifire and Better Auth tables, switches deployment configuration to DATABASE_URL, and documents the correct Supabase session-pooler setup.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.35/Ignifire-0.1.35-Setup.exe",
-  "sha256": "2FCFBEFBE72A52F4FEF91D6EA0D579FA572D1EA186BC152191A67F24834F149B"
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.36/Ignifire-0.1.36-Setup.exe",
+  "sha256": "229FFABDAE11FA6A1AA0DC91B8B6EB6ED034CFBEB8F7B4CBD21C1F661F0805E9"
 }
