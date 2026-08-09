@@ -9,7 +9,7 @@ It intentionally includes only:
 - library search;
 - authenticated streaming from Ignifire cloud storage;
 - basic play, pause, previous, next, shuffle, repeat, seek, and volume controls;
-- a stable Windows download button and account-settings link.
+- a direct Windows installer download that follows the latest published public build, plus an account-settings link.
 
 It intentionally excludes imports, library editing, Shelf Mode, Suno and AI tools, advanced customization, cloud mutations, and beta-channel switching.
 

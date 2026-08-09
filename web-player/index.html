@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0b0a0f">
   <meta name="description" content="Stream your synced Ignifire music library from the web.">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://accounts.ignifire.app data:; connect-src https://accounts.ignifire.app; media-src https://accounts.ignifire.app; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; upgrade-insecure-requests">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://accounts.ignifire.app data:; connect-src https://accounts.ignifire.app https://raw.githubusercontent.com; media-src https://accounts.ignifire.app; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; upgrade-insecure-requests">
   <title>Ignifire — Your music, everywhere</title>
   <link rel="icon" href="https://accounts.ignifire.app/ignifire-logo.png">
   <link rel="stylesheet" href="./styles.css">
@@ -22,7 +22,7 @@
       <p id="authMessage">Checking your secure Ignifire session…</p>
       <div class="auth-actions hidden" id="authActions">
         <a class="primary-action" id="signInLink" href="https://accounts.ignifire.app/account?mode=signin">Sign in to listen</a>
-        <a class="secondary-action" href="https://github.com/FennXWeb/firefly-music-player/releases/latest">Download for Windows</a>
+        <a class="secondary-action" data-desktop-download href="https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.47/Ignifire-0.1.47-Setup.exe">Download for Windows</a>
       </div>
       <span class="auth-footnote">Only music you chose to sync is available in the browser.</span>
     </div>
@@ -44,7 +44,7 @@
         <span aria-hidden="true">⌕</span>
         <input id="searchInput" type="search" placeholder="Search your library" autocomplete="off">
       </label>
-      <a class="download-button" href="https://github.com/FennXWeb/firefly-music-player/releases/latest" target="_blank" rel="noreferrer">Get the app</a>
+      <a class="download-button" data-desktop-download href="https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.47/Ignifire-0.1.47-Setup.exe">Get the app</a>
       <a class="account-chip" id="accountChip" href="https://accounts.ignifire.app/account" aria-label="Account settings">I</a>
     </header>
 

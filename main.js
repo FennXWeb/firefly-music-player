@@ -476,7 +476,13 @@ async function portableCloudState(state, endpoint, token, onProgress) {
     track.path = null;track.url = null;delete track.liveFolderId;delete track.cloudSourceId;
     if (!filePath) { if (original?.cloudFile?.hash) track.cloudFile = original.cloudFile;completed++;onProgress?.({id:track.id,cloudFile:track.cloudFile,completed,total:portableTracks.length});continue; }
     try { track.cloudFile = await uploadCloudObject(filePath, endpoint, token); }
-    catch (error) { if (error.status === 413) throw error;track.cloudFileUnavailable = true; }
+    catch (error) {
+      track.cloudFileUnavailable = true;
+      const title = String(track.title || path.basename(filePath) || 'track');
+      const uploadError = new Error(`Could not upload "${title}". ${error?.message || 'The cloud service rejected the audio file.'}`);
+      uploadError.status = error?.status;
+      throw uploadError;
+    }
     completed++;onProgress?.({id:track.id,cloudFile:track.cloudFile,completed,total:portableTracks.length});
   }
   await embedPortableFiles(portable);

@@ -1,16 +1,15 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.47",
-  "publishedAt": "2026-08-09T23:36:10.0335178Z",
+  "version": "0.1.48",
+  "publishedAt": "2026-08-09T23:45:22.0000000Z",
   "audience": "user",
   "highlights": [
-    "Ignifire now opens with a dedicated animated startup splash screen.",
-    "The desktop window remains hidden until the saved library, preferences, and first view are ready.",
-    "A smooth crossfade transitions from the Ignifire loading experience into the main app.",
-    "Startup includes a recovery timeout so an initialization problem can never leave the app invisible."
+    "Cloud backup now stops and shows the exact track when an audio upload fails instead of reporting a misleading success.",
+    "Ignifire for Web distinguishes an empty library from a snapshot whose audio files still need to finish syncing.",
+    "The web app's download buttons now download the latest published Windows installer directly."
   ],
-  "notes": "Adds a polished animated Ignifire startup splash that stays visible until the renderer finishes loading durable state and its initial library view.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.47/Ignifire-0.1.47-Setup.exe",
-  "sha256": "E1144992DB4471E6BFA8805DE8BB5866A63EB2ED1997C359F4B5ABC799B7D5C1"
+  "notes": "Improves cloud-library recovery and makes the Windows download buttons resolve directly to the newest published installer.",
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.48/Ignifire-0.1.48-Setup.exe",
+  "sha256": "DE9C55FBD556A41725E109B589B57E1A4CE9EB7AB8D1AE3B254300692EC0AF70"
 }
