@@ -1,9 +1,9 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.38",
+  "version": "0.1.39",
   "publishedAt": "2026-08-09T02:06:41.0203403Z",
-  "notes": "Makes the top-right account control reflect the signed-in user's initials, routes it to Account & sync, shows a Sign in action when signed out, and raises the default cloud quota from 150 MB to 256 GB for new and existing accounts.",
+  "notes": "Removes the playback-click notification and makes Play automatically shuffle and start the entire playable library whenever the queue is empty.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.38/Ignifire-0.1.38-Setup.exe",
   "sha256": "C7AE7F7E1762E87702274B93122A7A375113E8BA3202281E27944B833CA8A56C"
 }

@@ -1524,18 +1524,22 @@ function playTrack(track,preserveQueue=false){
   updateFullscreenArtistBackdrop(track);
   renderQueue();
   syncNativePlaybackState();
-  if(track.url){audio.volume=settings.muted?0:settings.volume/100;audio.src=track.url;audio.playbackRate=Math.max(.5,Math.min(2,Number(settings.playbackRate)||1));audio.play().then(()=>setPlaying(true)).catch(()=>toast('Playback needs a click','Press play once to allow local audio.'));}else{simProgress=0;setRange($('#progress'),0);setPlaying(true);commitPlayCount(track)}
+  if(track.url){audio.volume=settings.muted?0:settings.volume/100;audio.src=track.url;audio.playbackRate=Math.max(.5,Math.min(2,Number(settings.playbackRate)||1));audio.play().then(()=>setPlaying(true)).catch(()=>setPlaying(false));}else{simProgress=0;setRange($('#progress'),0);setPlaying(true);commitPlayCount(track)}
   if($('#fullscreenPlayer').classList.contains('open')){if(fullscreenMode==='video')prepareTrackVideo(track);if(fullscreenMode==='lyrics')renderLyricsStage(track)}
 }
 function setPlaying(value){isPlaying=value;const name=value?'pause':'play';$('#playBtn').innerHTML=icon(name);$('#fullPlay').innerHTML=icon(name);renderQueue();syncNativePlaybackState();clearInterval(simTimer);if(value&&!currentTrack.url){simTimer=setInterval(()=>{simProgress=(simProgress+.22)%100;setRange($('#progress'),simProgress);$('#elapsed').textContent=formatTime(simProgress*2.72);if(Date.now()-lastDiscordProgressSync>15000){lastDiscordProgressSync=Date.now();syncNativePlaybackState()}},1000)}}
-function togglePlay(){if(!currentTrack){toast('Nothing to play','Import music first.');return}if(currentTrack.url){if(audio.paused)audio.play();else audio.pause()}else setPlaying(!isPlaying)}
+function startShuffledLibrary(){
+  const library=allTracks().filter(track=>!track.pending);if(!library.length){toast('Nothing to play','Import music first.');return false}
+  playbackOriginalQueue=[...library];playbackQueue=shuffledTracks(library);playbackQueueExplicit=true;setShuffleEnabled(true,{persist:true,reorder:false});playTrack(playbackQueue[0],true);return true
+}
+function togglePlay(){if(isPlaying){if(currentTrack?.url)audio.pause();else setPlaying(false);return}if(!effectivePlaybackQueue().length){startShuffledLibrary();return}if(!currentTrack){playTrack(effectivePlaybackQueue()[0],true);return}if(currentTrack.url)audio.play().catch(()=>setPlaying(false));else setPlaying(true)}
 function formatTime(s){s=Math.floor(s);return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`}
 function nextTrack(dir=1,{ended=false}={}){const tracks=effectivePlaybackQueue();if(!tracks.length){toast(playbackQueueExplicit?'Queue finished':'Nothing to play',playbackQueueExplicit?'Add songs or start another collection.':'Import music first.');return}const idx=currentTrack?tracks.findIndex(t=>t.id===currentTrack.id):-1;if(ended&&settings.stopAfterCurrent){settings.stopAfterCurrent=false;setPlaying(false);saveLibrary();toast('Stopped after current track');return}if(ended&&!settings.autoplayNext){setPlaying(false);renderQueue();return}if(ended&&repeatMode==='one'){playTrack(currentTrack,true);return}if(ended&&idx===tracks.length-1&&repeatMode==='off'){setPlaying(false);renderQueue();return}const next=idx<0?(dir>=0?0:tracks.length-1):(idx+dir+tracks.length)%tracks.length;playTrack(tracks[next],playbackQueueExplicit)}
 function handleNativeMediaCommand(command){
   if(command==='toggle'){togglePlay();return}
   if(command==='next'){nextTrack(1);return}
   if(command==='previous'){nextTrack(-1);return}
-  if(command==='play'){if(!currentTrack){toast('Nothing to play','Import music first.');return}if(currentTrack.url){if(audio.paused)audio.play().catch(()=>toast('Playback needs a click','Press play once inside Ignifire.'))}else setPlaying(true);return}
+  if(command==='play'){if(!effectivePlaybackQueue().length){startShuffledLibrary();return}if(!currentTrack){playTrack(effectivePlaybackQueue()[0],true);return}if(currentTrack.url){if(audio.paused)audio.play().catch(()=>setPlaying(false))}else setPlaying(true);return}
   if(command==='pause'){if(currentTrack?.url)audio.pause();else if(currentTrack)setPlaying(false);return}
   if(command==='stop'){if(currentTrack?.url){audio.pause();try{audio.currentTime=0}catch{/* A not-yet-loaded cloud track may not be seekable. */}}else simProgress=0;setRange($('#progress'),0);$('#elapsed').textContent='0:00';setPlaying(false)}
 }
