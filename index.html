@@ -86,9 +86,10 @@
   </div>
 
   <footer class="player" id="player">
+    <div class="player-playlist-art" id="playerPlaylistArt" aria-hidden="true"></div>
     <div class="now-playing" title="Right-click for track options">
       <div class="now-cover empty-cover"><img class="ignifire-logo-static" src="assets/ignifire-logo.png" alt=""></div>
-      <div><strong id="nowTitle">Nothing playing</strong><span id="nowArtist">Import music to begin</span></div>
+      <div class="now-playing-copy"><strong id="nowTitle">Nothing playing</strong><span id="nowArtist">Import music to begin</span><span class="now-playlist-source" id="nowPlaylistSource" hidden>from <button id="nowPlaylistLink" type="button"></button></span></div>
       <button class="love" id="favoriteTrack" aria-label="Favorite current track" aria-pressed="false">♥</button>
     </div>
     <div class="transport">
