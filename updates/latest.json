@@ -2,7 +2,7 @@
   "channel": "beta",
   "branch": "beta",
   "version": "0.1.46",
-  "publishedAt": "2026-08-09T23:16:54.1583449Z",
+  "publishedAt": "2026-08-09T23:20:01.5511557Z",
   "audience": "user",
   "highlights": [
     "Windows media play, pause, next, previous, and stop keys now use Electron's valid native accelerator names.",
@@ -12,5 +12,5 @@
   ],
   "notes": "Fixes the Windows main-process error caused by invalid media-key accelerator names and makes native shortcut cleanup safe during shutdown.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.46/Ignifire-0.1.46-Setup.exe",
-  "sha256": "85EDAA853D07FD7797AF52F9616C8953112C80A3F38957DAD5D30EA157C0387F"
+  "sha256": "2AFB05F8F22F2333F1E13F2A28B4F981B65C701DA44C7F4B6DF9B90EE233622F"
 }
