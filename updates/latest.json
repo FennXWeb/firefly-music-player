@@ -1,9 +1,9 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.34",
-  "publishedAt": "2026-08-09T00:02:13.3101889Z",
+  "version": "0.1.35",
+  "publishedAt": "2026-08-09T00:28:35.6148877Z",
   "notes": "Rebrands the app as Ignifire with a completely new molten-flame and audio-waveform identity, new animated in-app mark, Windows icon, installer and shortcut branding, refreshed ember-magenta visual accents, Ignifire account portal, email and passkey branding, Discord presence copy, and updater packaging. Existing libraries and credentials migrate in place.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.34/Firefly-0.1.34-Setup.exe",
-  "sha256": "1CEC458ABE3B09C62E967D5BE25E413661689F5AA7B8025C5327B0ADE08BD360"
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.35/Ignifire-0.1.35-Setup.exe",
+  "sha256": "2FCFBEFBE72A52F4FEF91D6EA0D579FA572D1EA186BC152191A67F24834F149B"
 }
