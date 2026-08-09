@@ -2,7 +2,7 @@
   "channel": "beta",
   "branch": "beta",
   "version": "0.1.48",
-  "publishedAt": "2026-08-09T23:45:22.0000000Z",
+  "publishedAt": "2026-08-09T23:49:12.8927789Z",
   "audience": "user",
   "highlights": [
     "Cloud backup now stops and shows the exact track when an audio upload fails instead of reporting a misleading success.",
@@ -11,5 +11,5 @@
   ],
   "notes": "Improves cloud-library recovery and makes the Windows download buttons resolve directly to the newest published installer.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.48/Ignifire-0.1.48-Setup.exe",
-  "sha256": "DE9C55FBD556A41725E109B589B57E1A4CE9EB7AB8D1AE3B254300692EC0AF70"
+  "sha256": "88184911083841837B90E89245CE7E8FF539533E0B3591E843A79BB1E63909ED"
 }
