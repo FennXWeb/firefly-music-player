@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import crypto from 'node:crypto';
-import mysql from 'mysql2/promise';
+import { Pool } from 'pg';
 import { betterAuth } from 'better-auth';
 import { emailOTP, phoneNumber } from 'better-auth/plugins';
 import { passkey } from '@better-auth/passkey';
@@ -9,15 +9,16 @@ import { sendAccountEmail, sendAccountSms } from './messaging.js';
 export const publicURL = String(process.env.PUBLIC_URL || 'http://localhost:3000').replace(/\/$/, '');
 const rpID = new URL(publicURL).hostname;
 
-export const pool = mysql.createPool({
-  host: process.env.MYSQL_HOST,
-  port: Number(process.env.MYSQL_PORT || 3306),
-  user: process.env.MYSQL_USER,
-  password: process.env.MYSQL_PASSWORD,
-  database: process.env.MYSQL_DATABASE,
-  timezone: 'Z',
-  connectionLimit: 10,
-  enableKeepAlive: true
+const connectionString = String(process.env.DATABASE_URL || '').trim();
+if (!connectionString) throw new Error('DATABASE_URL must contain the PostgreSQL connection string.');
+const databaseSSL = String(process.env.DATABASE_SSL || 'true').toLowerCase() !== 'false';
+
+export const pool = new Pool({
+  connectionString,
+  max: Math.max(1, Number(process.env.DATABASE_POOL_SIZE) || 10),
+  connectionTimeoutMillis: 10_000,
+  idleTimeoutMillis: 30_000,
+  ssl: databaseSSL ? { rejectUnauthorized: String(process.env.DATABASE_SSL_REJECT_UNAUTHORIZED || 'true').toLowerCase() !== 'false' } : false
 });
 
 export const auth = betterAuth({

@@ -1,6 +1,6 @@
 # Ignifire account and sync service
 
-This is the server-side half of Ignifire Accounts. It is designed for a Hostinger Business/Cloud Node.js deployment with MySQL, or a Hostinger VPS.
+This is the server-side half of Ignifire Accounts. It is designed for a Hostinger Business/Cloud Node.js deployment backed by Supabase PostgreSQL, or for a Hostinger VPS using the same database.
 
 It provides:
 
@@ -16,7 +16,7 @@ It provides:
 
 ## Deployment
 
-1. In Hostinger hPanel, create a MySQL database and a database user dedicated to Ignifire.
+1. Create a Supabase project. Open **Connect**, copy the **Session pooler** PostgreSQL connection string, and save it as `DATABASE_URL` in the Node service environment. Session mode is appropriate for a persistent Hostinger Node service and works on IPv4 networks.
 2. Create an email account such as `accounts@yourdomain.com`. Hostinger SMTP normally uses `smtp.hostinger.com` on port 465 with TLS.
 3. Create an HTTPS subdomain such as `accounts.yourdomain.com` and deploy this directory as a Node.js app using Node 22 or 24.
 4. Copy `.env.example` to the deployment environment variables and fill every required value. Never commit `.env`.
@@ -28,7 +28,7 @@ It provides:
    ```
 
    Use the first value for `BETTER_AUTH_SECRET` and the second for `STORAGE_ENCRYPTION_KEY`. Back up the storage key in a password manager; losing it makes stored backups unrecoverable.
-6. Run `npm install`, then `npm run auth:migrate` to create Better Auth's tables. Import `schema.sql` into the same database using phpMyAdmin or the MySQL command line.
+6. Run `npm install`, then `npm run auth:migrate` to create Better Auth's tables. Next, run `schema.sql` in the Supabase SQL Editor to create Ignifire's private sync tables. The script enables RLS without granting browser-facing policies; the trusted Node service connects directly through PostgreSQL.
 7. Run `npm start`. Verify `https://accounts.yourdomain.com/health` returns `{"ok":true,"service":"ignifire-cloud"}`.
 8. In Ignifire, open **Settings → Account & sync**, enter the HTTPS account-server address, then create or sign into an account.
 
@@ -47,9 +47,9 @@ The implementation keeps SMS delivery isolated in `src/messaging.js`, so Twilio 
 ## Security notes
 
 - Terminate TLS at Hostinger and force HTTPS for the account subdomain.
-- Keep MySQL private to the application host; never expose its port publicly.
-- Set a strict database user with access only to the Ignifire database.
-- Back up both MySQL and `STORAGE_ROOT`; neither is useful alone.
+- Keep `DATABASE_URL` server-side. Never put the database password or connection string in the Windows app or browser bundle.
+- Keep RLS enabled on all tables in Supabase's exposed `public` schema.
+- Back up both PostgreSQL and `STORAGE_ROOT`; neither is useful alone.
 - Rotate SMTP/SMS credentials if they are ever disclosed.
 - Do not put database, SMTP, SMS, or encryption credentials in the Windows app.
 - Configure Hostinger backups and test restoring them before inviting users.
