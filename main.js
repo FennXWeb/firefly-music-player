@@ -31,6 +31,7 @@ const updatesDirectory = path.join(dataDirectory, 'updates');
 const zipImportDirectory = path.join(dataDirectory, 'zip-imports');
 const cloudCacheDirectory = path.join(dataDirectory, 'cloud-library');
 const apiPassBaseUrl = 'https://api.apipass.dev';
+const ignifireAccountEndpoint = 'https://accounts.ignifire.app';
 const updateRepository = 'FennXWeb/firefly-music-player';
 const updateBranches = { stable: 'main', beta: 'beta' };
 const ignifireDiscordApplicationId = '1535771097595777104';
@@ -241,27 +242,19 @@ async function writeBufferAtomic(filePath, value) {
     await fs.rename(temporaryPath, filePath);
   });
 }
-function normalizedAccountEndpoint(value = '') {
-  try {
-    const url = new URL(String(value).trim());
-    if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))) return '';
-    return url.origin;
-  } catch { return ''; }
-}
 async function accountCredentials() {
   const saved = await readJson(credentialsPath, {});
-  return { token: decryptSecret(saved.accountToken), endpoint: decryptSecret(saved.accountEndpoint) };
+  return { token: decryptSecret(saved.accountToken) };
 }
-async function updateAccountCredentials({ token, endpoint } = {}) {
+async function updateAccountCredentials({ token } = {}) {
   const saved = await readJson(credentialsPath, {});
   if (token !== undefined) saved.accountToken = encryptSecret(token);
-  if (endpoint !== undefined) saved.accountEndpoint = encryptSecret(normalizedAccountEndpoint(endpoint));
+  delete saved.accountEndpoint;
   await writeJsonAtomic(credentialsPath, saved);
 }
 async function accountRequest(resource, options = {}) {
-  const stored = await accountCredentials(), endpoint = normalizedAccountEndpoint(options.endpoint || stored.endpoint);
+  const stored = await accountCredentials(), endpoint = ignifireAccountEndpoint;
   const token = options.token ?? stored.token;
-  if (!endpoint) throw new Error('Set the Ignifire account server address first.');
   const { endpoint: _endpoint, token: _token, headers: requestedHeaders, ...requestOptions } = options;
   const headers = { Accept: 'application/json', 'User-Agent': `Ignifire/${app.getVersion()}`, ...(requestedHeaders || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -273,16 +266,15 @@ async function accountRequest(resource, options = {}) {
   }
   return response;
 }
-async function accountStatus(endpoint) {
-  if (endpoint) await updateAccountCredentials({ endpoint });
+async function accountStatus() {
   const stored = await accountCredentials();
-  if (!stored.token || !normalizedAccountEndpoint(stored.endpoint)) return { signedIn: false, configured: Boolean(normalizedAccountEndpoint(stored.endpoint)), endpoint: normalizedAccountEndpoint(stored.endpoint) };
+  if (!stored.token) return { signedIn: false, configured: true };
   try {
     const response = await accountRequest('/v1/me');
-    return { signedIn: true, configured: true, endpoint: normalizedAccountEndpoint(stored.endpoint), ...(await response.json()) };
+    return { signedIn: true, configured: true, ...(await response.json()) };
   } catch (error) {
-    if (error.status === 401) { await updateAccountCredentials({ token: '' });return { signedIn: false, configured: true, expired: true, endpoint: normalizedAccountEndpoint(stored.endpoint) }; }
-    return { signedIn: false, configured: true, offline: true, error: error.message, endpoint: normalizedAccountEndpoint(stored.endpoint) };
+    if (error.status === 401) { await updateAccountCredentials({ token: '' });return { signedIn: false, configured: true, expired: true }; }
+    return { signedIn: false, configured: true, offline: true, error: error.message };
   }
 }
 async function uploadCloudObject(filePath, endpoint, token) {
@@ -325,7 +317,7 @@ async function portableCloudState(state, endpoint, token) {
 }
 async function uploadCloudSnapshot(state, { manual = false } = {}) {
   if (cloudSyncInFlight) { pendingCloudState = state;return { queued: true }; }
-  const endpoint = normalizedAccountEndpoint(state?.settings?.cloudServerUrl), enabled = Boolean(state?.settings?.cloudSyncEnabled);
+  const endpoint = ignifireAccountEndpoint, enabled = Boolean(state?.settings?.cloudSyncEnabled);
   const { token } = await accountCredentials();
   if (!enabled || !endpoint || !token) return { skipped: true };
   cloudSyncInFlight = true;
@@ -347,8 +339,8 @@ async function uploadCloudSnapshot(state, { manual = false } = {}) {
 function scheduleCloudBackup(state, delay = 3500) {
   clearTimeout(cloudSyncTimer);cloudSyncTimer = setTimeout(() => uploadCloudSnapshot(state), delay);cloudSyncTimer.unref?.();
 }
-async function downloadCloudSnapshot(endpoint) {
-  const stored = await accountCredentials(), base = normalizedAccountEndpoint(endpoint || stored.endpoint);
+async function downloadCloudSnapshot() {
+  const stored = await accountCredentials(), base = ignifireAccountEndpoint;
   const response = await accountRequest('/v1/sync/snapshot', { endpoint: base, token: stored.token });
   if (response.status === 204) return null;
   const payload = await response.json(), state = payload.state;
@@ -1017,24 +1009,22 @@ app.whenReady().then(() => {
     if (win && !win.isDestroyed()) primaryWindow = win;
     return connectDiscord(config);
   });
-  ipcMain.handle('account:status', async (_event, endpoint) => accountStatus(endpoint));
+  ipcMain.handle('account:status', async () => accountStatus());
   ipcMain.handle('account:open', async (_event, options = {}) => {
-    const endpoint = normalizedAccountEndpoint(options.endpoint);if (!endpoint) throw new Error('Enter the HTTPS address for your Ignifire account server.');
-    await updateAccountCredentials({ endpoint });
     const mode = ['signin','signup','passkeys'].includes(options.mode) ? options.mode : 'signin';
-    await shell.openExternal(`${endpoint}/account?desktop=1&mode=${mode}`);return true;
+    await shell.openExternal(`${ignifireAccountEndpoint}/account?desktop=1&mode=${mode}`);return true;
   });
   ipcMain.handle('account:claim', async (_event, options = {}) => {
-    const endpoint = normalizedAccountEndpoint(options.endpoint), code = String(options.code || '').trim();
-    if (!endpoint || !/^[A-Za-z0-9_-]{24,80}$/.test(code)) throw new Error('Enter the connection code shown in your browser.');
-    const response = await accountRequest('/v1/desktop/claim', { method: 'POST', endpoint, token: '', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, deviceName: process.env.COMPUTERNAME || 'Windows PC' }) });
-    const result = await response.json();await updateAccountCredentials({ endpoint, token: result.token });
-    let cloud = null;try { cloud = await downloadCloudSnapshot(endpoint); } catch (error) { if (error.status !== 404) result.syncError = error.message; }
-    return { account: await accountStatus(endpoint), cloud };
+    const code = String(options.code || '').trim();
+    if (!/^[A-Za-z0-9_-]{24,80}$/.test(code)) throw new Error('Enter the connection code shown in your browser.');
+    const response = await accountRequest('/v1/desktop/claim', { method: 'POST', token: '', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, deviceName: process.env.COMPUTERNAME || 'Windows PC' }) });
+    const result = await response.json();await updateAccountCredentials({ token: result.token });
+    let cloud = null;try { cloud = await downloadCloudSnapshot(); } catch (error) { if (error.status !== 404) result.syncError = error.message; }
+    return { account: await accountStatus(), cloud };
   });
   ipcMain.handle('account:sign-out', async () => {try{await accountRequest('/v1/desktop/session',{method:'DELETE'})}catch{/* Always remove the local credential, even while offline. */}await updateAccountCredentials({ token: '' });return true});
   ipcMain.handle('account:sync-now', async (_event, state) => uploadCloudSnapshot(state, { manual: true }));
-  ipcMain.handle('account:restore', async (_event, endpoint) => downloadCloudSnapshot(endpoint));
+  ipcMain.handle('account:restore', async () => downloadCloudSnapshot());
   ipcMain.handle('library:choose-files', async () => {
     const result = await dialog.showOpenDialog({
       title: 'Import music',
