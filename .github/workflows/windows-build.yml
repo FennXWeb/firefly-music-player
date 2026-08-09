@@ -32,12 +32,15 @@ jobs:
           $installer = "Ignifire-$version-Setup.exe"
           $portable = "Ignifire-$version-Portable.exe"
           $cloudServer = "Ignifire-Cloud-Server-$version.zip"
+          $webPlayer = "Ignifire-Web-$version.zip"
           tar -a -cf "release/$cloudServer" -C cloud-server package.json package-lock.json .env.example README.md schema.sql src web public
+          tar -a -cf "release/$webPlayer" -C web-player index.html styles.css app.js README.md
           $hash = (Get-FileHash "release/$installer" -Algorithm SHA256).Hash
           "version=$version" >> $env:GITHUB_OUTPUT
           "installer=$installer" >> $env:GITHUB_OUTPUT
           "portable=$portable" >> $env:GITHUB_OUTPUT
           "cloudServer=$cloudServer" >> $env:GITHUB_OUTPUT
+          "webPlayer=$webPlayer" >> $env:GITHUB_OUTPUT
           "sha256=$hash" >> $env:GITHUB_OUTPUT
       - uses: actions/upload-artifact@v4
         with:
@@ -46,6 +49,7 @@ jobs:
             release/${{ steps.build.outputs.installer }}
             release/${{ steps.build.outputs.portable }}
             release/${{ steps.build.outputs.cloudServer }}
+            release/${{ steps.build.outputs.webPlayer }}
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: beta-v${{ steps.build.outputs.version }}
@@ -57,6 +61,7 @@ jobs:
             release/${{ steps.build.outputs.installer }}
             release/${{ steps.build.outputs.portable }}
             release/${{ steps.build.outputs.cloudServer }}
+            release/${{ steps.build.outputs.webPlayer }}
       - name: Publish beta updater manifest
         shell: pwsh
         run: |

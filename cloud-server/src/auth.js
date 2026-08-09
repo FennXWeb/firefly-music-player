@@ -7,6 +7,7 @@ import { passkey } from '@better-auth/passkey';
 import { sendAccountEmail, sendAccountSms } from './messaging.js';
 
 export const publicURL = String(process.env.PUBLIC_URL || 'http://localhost:3000').replace(/\/$/, '');
+export const publicWebURL = String(process.env.PUBLIC_WEB_URL || 'https://ignifire.app').replace(/\/$/, '');
 const rpID = new URL(publicURL).hostname;
 
 const connectionString = String(process.env.DATABASE_URL || '').trim();
@@ -26,7 +27,7 @@ export const auth = betterAuth({
   baseURL: publicURL,
   secret: process.env.BETTER_AUTH_SECRET,
   database: pool,
-  trustedOrigins: [publicURL],
+  trustedOrigins: [publicURL, publicWebURL],
   emailAndPassword: { enabled: true, minPasswordLength: 10, requireEmailVerification: true },
   verification: { storeIdentifier: 'hashed' },
   session: { expiresIn: 60 * 60 * 24 * 30, updateAge: 60 * 60 * 24 },

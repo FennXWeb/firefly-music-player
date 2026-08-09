@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b0a0f">
+  <meta name="description" content="Stream your synced Ignifire music library from the web.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://accounts.ignifire.app data:; connect-src https://accounts.ignifire.app; media-src https://accounts.ignifire.app; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; upgrade-insecure-requests">
+  <title>Ignifire — Your music, everywhere</title>
+  <link rel="icon" href="https://accounts.ignifire.app/ignifire-logo.png">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="ambient" aria-hidden="true"><i></i><i></i><i></i></div>
+
+  <section class="auth-gate" id="authGate" aria-live="polite">
+    <div class="auth-glow"></div>
+    <div class="auth-card glass">
+      <img src="https://accounts.ignifire.app/ignifire-logo.png" alt="" class="auth-logo">
+      <span class="eyebrow">IGNIFIRE FOR WEB</span>
+      <h1>Your music,<br><em>everywhere.</em></h1>
+      <p id="authMessage">Checking your secure Ignifire session…</p>
+      <div class="auth-actions hidden" id="authActions">
+        <a class="primary-action" id="signInLink" href="https://accounts.ignifire.app/account?mode=signin">Sign in to listen</a>
+        <a class="secondary-action" href="https://github.com/FennXWeb/firefly-music-player/releases/latest">Download for Windows</a>
+      </div>
+      <span class="auth-footnote">Only music you chose to sync is available in the browser.</span>
+    </div>
+  </section>
+
+  <div class="app-shell hidden" id="appShell">
+    <header class="topbar glass">
+      <button class="brand" data-view="home" aria-label="Ignifire home">
+        <img src="https://accounts.ignifire.app/ignifire-logo.png" alt="">
+        <span>IGNIFIRE<small>WEB</small></span>
+      </button>
+      <nav aria-label="Library">
+        <button class="active" data-view="home">Home</button>
+        <button data-view="albums">Albums</button>
+        <button data-view="songs">Songs</button>
+        <button data-view="playlists">Playlists</button>
+      </nav>
+      <label class="search-control">
+        <span aria-hidden="true">⌕</span>
+        <input id="searchInput" type="search" placeholder="Search your library" autocomplete="off">
+      </label>
+      <a class="download-button" href="https://github.com/FennXWeb/firefly-music-player/releases/latest" target="_blank" rel="noreferrer">Get the app</a>
+      <a class="account-chip" id="accountChip" href="https://accounts.ignifire.app/account" aria-label="Account settings">I</a>
+    </header>
+
+    <main id="mainView" tabindex="-1"></main>
+
+    <footer class="player glass" id="player">
+      <div class="now-playing">
+        <div class="mini-cover cover-fallback" id="nowCover"></div>
+        <div><b id="nowTitle">Nothing playing</b><span id="nowArtist">Choose something from your cloud library</span></div>
+      </div>
+      <div class="transport">
+        <div class="transport-buttons">
+          <button id="shuffleButton" aria-label="Shuffle" aria-pressed="false">⌘</button>
+          <button id="previousButton" aria-label="Previous track">◀</button>
+          <button class="play-button" id="playButton" aria-label="Play">▶</button>
+          <button id="nextButton" aria-label="Next track">▶</button>
+          <button id="repeatButton" aria-label="Repeat off" data-mode="off">↻</button>
+        </div>
+        <div class="timeline"><span id="elapsed">0:00</span><input id="progress" type="range" min="0" max="100" step="0.1" value="0" aria-label="Playback position"><span id="duration">0:00</span></div>
+      </div>
+      <div class="volume"><button id="muteButton" aria-label="Mute">◖</button><input id="volume" type="range" min="0" max="100" value="72" aria-label="Volume"></div>
+    </footer>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <audio id="audio" preload="metadata" crossorigin="use-credentials"></audio>
+  <script src="./app.js" defer></script>
+</body>
+</html>

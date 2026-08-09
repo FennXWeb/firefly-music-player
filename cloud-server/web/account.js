@@ -8,6 +8,14 @@ let method = 'password';
 let mode = new URLSearchParams(location.search).get('mode') === 'signup' ? 'signup' : 'signin';
 let pendingEmailVerification = false;
 let resettingPassword = false;
+const returnTarget = (() => {
+  const value = new URLSearchParams(location.search).get('return');
+  if (!value) return '';
+  try {
+    const url = new URL(value);
+    return ['https://ignifire.app', 'https://www.ignifire.app'].includes(url.origin) ? `${url.origin}/` : '';
+  } catch { return ''; }
+})();
 
 function identifierKind(value) { return value.includes('@') ? 'email' : 'phone'; }
 function showMessage(value, good = false) { const element=$('#message');element.textContent=value||'';element.style.color=good?'#83c998':'#dc8778'; }
@@ -32,7 +40,7 @@ async function refreshSession() {
   const user = session?.user;
   $('#signedOut').classList.toggle('hidden', Boolean(user));
   $('#signedIn').classList.toggle('hidden', !user);
-  if (user) { $('#userName').textContent=user.name||'Ignifire listener';$('#userIdentity').textContent=user.phoneNumber||(!/@phone\.(?:firefly|ignifire)\.invalid$/i.test(String(user.email||''))?user.email:'')||'Secure account'; }
+  if (user) { $('#userName').textContent=user.name||'Ignifire listener';$('#userIdentity').textContent=user.phoneNumber||(!/@phone\.(?:firefly|ignifire)\.invalid$/i.test(String(user.email||''))?user.email:'')||'Secure account';if(returnTarget)location.replace(returnTarget); }
   return user;
 }
 

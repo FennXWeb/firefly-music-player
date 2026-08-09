@@ -78,6 +78,16 @@ export async function requireDesktopAuth(req, res, next) {
   } catch (error) { next(error); }
 }
 
+export async function requireWebAuth(req, res, next) {
+  try {
+    const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+    if (!session?.user?.id) return res.status(401).json({ error: 'Sign in to use Ignifire for Web.' });
+    req.fireflyUserId = session.user.id;
+    req.fireflyWebUser = session.user;
+    next();
+  } catch (error) { next(error); }
+}
+
 export async function revokeDesktopAuth(req, res, next) {
   try {
     await pool.query('DELETE FROM firefly_api_tokens WHERE token_hash=$1 AND user_id=$2', [req.fireflyTokenHash, req.fireflyUserId]);
@@ -150,6 +160,116 @@ export async function me(req, res, next) {
       user: { id: user.id, name: user.name, email: user.email, phoneNumber: user.phoneNumber || '' },
       storageUsed: Number(storage.usage_bytes),
       storageLimit: Number(storage.quota_bytes)
+    });
+  } catch (error) {
+    if (transaction) await client.query('ROLLBACK').catch(() => {});
+    next(error);
+  } finally { client.release(); }
+}
+
+function webArtwork(value) {
+  const source = String(value || '');
+  return /^(?:https:\/\/|data:image\/(?:png|jpe?g|webp|gif);base64,)/i.test(source) ? source : '';
+}
+
+function webTrack(track = {}) {
+  const hash = String(track.cloudFile?.hash || '').toLowerCase();
+  return {
+    id: String(track.id || ''),
+    title: String(track.title || 'Untitled track'),
+    artist: String(track.artist || 'Unknown Artist'),
+    album: String(track.album || 'Unknown Album'),
+    albumId: String(track.albumId || ''),
+    duration: String(track.duration || ''),
+    durationSeconds: Math.max(0, Number(track.durationSeconds) || 0),
+    trackNumber: Math.max(0, Number(track.trackNumber) || 0),
+    discNumber: Math.max(1, Number(track.discNumber) || 1),
+    plays: Math.max(0, Number(track.plays) || 0),
+    lastPlayed: Number(track.lastPlayed) || null,
+    added: Number(track.added) || 0,
+    favorite: Boolean(track.favorite),
+    playable: /^[a-f0-9]{64}$/.test(hash),
+    cloudHash: /^[a-f0-9]{64}$/.test(hash) ? hash : ''
+  };
+}
+
+function webPlaylist(playlist = {}) {
+  return {
+    id: String(playlist.id || ''),
+    title: String(playlist.title || 'Untitled playlist'),
+    color: String(playlist.color || ''),
+    trackIds: Array.isArray(playlist.trackIds) ? playlist.trackIds.map(String) : [],
+    children: Array.isArray(playlist.children) ? playlist.children.map(webPlaylist) : [],
+    coverDesign: playlist.coverDesign ? {
+      background: String(playlist.coverDesign.background || ''),
+      colorA: String(playlist.coverDesign.colorA || ''),
+      colorB: String(playlist.coverDesign.colorB || ''),
+      font: String(playlist.coverDesign.font || ''),
+      layout: String(playlist.coverDesign.layout || ''),
+      overlay: String(playlist.coverDesign.overlay || ''),
+      title: String(playlist.coverDesign.title || ''),
+      subtitle: String(playlist.coverDesign.subtitle || ''),
+      image: webArtwork(playlist.coverDesign.image)
+    } : null
+  };
+}
+
+function webLibraryState(state = {}) {
+  const albums = Array.isArray(state.albums) ? state.albums.map(album => ({
+    id: String(album.id || ''),
+    title: String(album.title || 'Untitled album'),
+    artist: String(album.artist || 'Unknown Artist'),
+    year: Number(album.year) || null,
+    genre: String(album.genre || ''),
+    cover: String(album.cover || ''),
+    customCover: webArtwork(album.customCover),
+    tracks: Array.isArray(album.tracks) ? album.tracks.filter(track => !track?.pending).map(webTrack) : []
+  })).filter(album => album.tracks.length) : [];
+  const artistProfiles = {};
+  if (state.artistProfiles && typeof state.artistProfiles === 'object' && !Array.isArray(state.artistProfiles)) {
+    for (const [artist, profile] of Object.entries(state.artistProfiles)) {
+      artistProfiles[String(artist)] = { image: webArtwork(profile?.image), animated: Boolean(profile?.animated) };
+    }
+  }
+  return {
+    albums,
+    playlists: Array.isArray(state.playlists) ? state.playlists.map(webPlaylist) : [],
+    artistProfiles,
+    playHistory: Array.isArray(state.playHistory) ? state.playHistory.slice(-500).map(event => ({ trackId: String(event?.trackId || ''), playedAt: Number(event?.playedAt) || 0 })) : []
+  };
+}
+
+export async function getWebLibrary(req, res, next) {
+  const client = await pool.connect();
+  let transaction = false;
+  try {
+    await client.query('BEGIN');
+    transaction = true;
+    const storage = await ensureAccount(client, req.fireflyUserId);
+    const { rows } = await client.query(
+      'SELECT storage_name,revision,device_name,synced_at FROM firefly_sync_snapshots WHERE user_id=$1',
+      [req.fireflyUserId]
+    );
+    await client.query('COMMIT');
+    transaction = false;
+    let library = null;
+    if (rows[0]) {
+      const data = await decryptFromFile(rows[0].storage_name);
+      library = webLibraryState(JSON.parse(data.toString('utf8')));
+    }
+    res.set('Cache-Control', 'private, no-store').json({
+      user: {
+        id: req.fireflyWebUser.id,
+        name: req.fireflyWebUser.name || 'Ignifire listener',
+        email: /@phone\.(?:firefly|ignifire)\.invalid$/i.test(String(req.fireflyWebUser.email || '')) ? '' : String(req.fireflyWebUser.email || ''),
+        phoneNumber: String(req.fireflyWebUser.phoneNumber || '')
+      },
+      storageUsed: Number(storage.usage_bytes),
+      storageLimit: Number(storage.quota_bytes),
+      revision: Number(rows[0]?.revision || 0),
+      syncedAt: rows[0]?.synced_at || null,
+      deviceName: rows[0]?.device_name || '',
+      library
     });
   } catch (error) {
     if (transaction) await client.query('ROLLBACK').catch(() => {});
@@ -231,6 +351,46 @@ export async function getObject(req, res, next) {
       'Content-Length': String(data.length),
       'Content-Disposition': `attachment; filename="${safePart(rows[0].original_name) || 'ignifire-audio'}"`
     }).send(data);
+  } catch (error) { next(error); }
+}
+
+function audioContentType(fileName = '') {
+  const extension = path.extname(fileName).toLowerCase();
+  return ({
+    '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.wave': 'audio/wav', '.flac': 'audio/flac',
+    '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.ogg': 'audio/ogg', '.oga': 'audio/ogg',
+    '.opus': 'audio/ogg; codecs=opus', '.wma': 'audio/x-ms-wma', '.aiff': 'audio/aiff', '.aif': 'audio/aiff'
+  })[extension] || 'application/octet-stream';
+}
+
+export async function streamWebObject(req, res, next) {
+  try {
+    const hash = String(req.params.hash || '').toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(hash)) return res.status(400).json({ error: 'The cloud track identifier is invalid.' });
+    const { rows } = await pool.query(
+      'SELECT original_name,storage_name,size_bytes FROM firefly_sync_objects WHERE user_id=$1 AND content_hash=$2',
+      [req.fireflyUserId, hash]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Cloud track not found.' });
+    const data = await decryptFromFile(rows[0].storage_name);
+    const size = data.length;
+    const commonHeaders = {
+      'Accept-Ranges': 'bytes',
+      'Content-Type': audioContentType(rows[0].original_name),
+      'Content-Disposition': `inline; filename="${safePart(rows[0].original_name) || 'ignifire-audio'}"`,
+      'Cache-Control': 'private, max-age=3600'
+    };
+    const range = String(req.headers.range || '').match(/^bytes=(\d*)-(\d*)$/);
+    if (!range) return res.set({ ...commonHeaders, 'Content-Length': String(size) }).send(data);
+    let start = range[1] ? Number(range[1]) : 0;
+    let end = range[2] ? Number(range[2]) : size - 1;
+    if (!range[1] && range[2]) { const suffix = Math.max(0, Number(range[2]));start = Math.max(0, size - suffix);end = size - 1; }
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || start >= size) {
+      return res.status(416).set('Content-Range', `bytes */${size}`).end();
+    }
+    end = Math.min(end, size - 1);
+    const chunk = data.subarray(start, end + 1);
+    res.status(206).set({ ...commonHeaders, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': String(chunk.length) }).send(chunk);
   } catch (error) { next(error); }
 }
 

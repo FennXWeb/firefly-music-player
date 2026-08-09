@@ -1,9 +1,9 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.39",
+  "version": "0.1.40",
   "publishedAt": "2026-08-09T02:13:45.9155886Z",
-  "notes": "Removes the playback-click notification and makes Play automatically shuffle and start the entire playable library whenever the queue is empty.",
+  "notes": "Adds the secure, read-only Ignifire web player backend and production web bundle for ignifire.app, including required login, cloud audio streaming, a reduced library UI, and a stable desktop download link.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.39/Ignifire-0.1.39-Setup.exe",
   "sha256": "0E1617B0381220ED376D858B58EEBB74647AA429E3FF7888917795FE0CB50BD0"
 }
