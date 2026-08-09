@@ -2,7 +2,7 @@
   "channel": "beta",
   "branch": "beta",
   "version": "0.1.47",
-  "publishedAt": "2026-08-09T23:32:47.5577327Z",
+  "publishedAt": "2026-08-09T23:36:10.0335178Z",
   "audience": "user",
   "highlights": [
     "Ignifire now opens with a dedicated animated startup splash screen.",
@@ -12,5 +12,5 @@
   ],
   "notes": "Adds a polished animated Ignifire startup splash that stays visible until the renderer finishes loading durable state and its initial library view.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.47/Ignifire-0.1.47-Setup.exe",
-  "sha256": "556A189EEDFF50BD750EBB5DFE171E437410A9989C3023861BEE17EC74EA6196"
+  "sha256": "E1144992DB4471E6BFA8805DE8BB5866A63EB2ED1997C359F4B5ABC799B7D5C1"
 }
