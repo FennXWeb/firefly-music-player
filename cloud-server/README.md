@@ -10,7 +10,7 @@ It provides:
 - short-lived, single-use desktop connection codes;
 - 90-day revocable desktop sessions;
 - opt-in library, settings, artwork, history, playlist, and music-file sync;
-- a 150 MB default per-account quota;
+- a 256 GB default per-account quota;
 - SHA-256 integrity checks and per-account file deduplication;
 - AES-256-GCM encryption for every stored cloud object and snapshot.
 
@@ -28,9 +28,9 @@ It provides:
    ```
 
    Use the first value for `BETTER_AUTH_SECRET` and the second for `STORAGE_ENCRYPTION_KEY`. Back up the storage key in a password manager; losing it makes stored backups unrecoverable.
-6. Run `npm install`, then `npm run auth:migrate` to create Better Auth's tables. Next, run `schema.sql` in the Supabase SQL Editor to create Ignifire's private sync tables. The script enables RLS without granting browser-facing policies; the trusted Node service connects directly through PostgreSQL.
+6. In the Supabase SQL Editor, run `better-auth-schema.sql` once, choosing **Run without RLS** when Supabase offers to append automatic RLS statements. Then run `schema.sql` to create Ignifire's private sync tables and safely enable RLS with correctly quoted identifiers. No browser-facing policies are granted; the trusted Node service connects directly through PostgreSQL.
 7. Run `npm start`. Verify `https://accounts.yourdomain.com/health` returns `{"ok":true,"service":"ignifire-cloud"}`.
-8. In Ignifire, open **Settings → Account & sync**, enter the HTTPS account-server address, then create or sign into an account.
+8. In Ignifire, open **Settings → Account & sync**, then create or sign into an account through `https://accounts.ignifire.app`.
 
 The deployment needs a persistent writable directory for `STORAGE_ROOT`. Do not place it inside a directory replaced by every deployment. On managed Hostinger hosting, choose a persistent application-data directory available to the Node app; on a VPS, `/var/lib/firefly-cloud` is a sensible choice owned only by the service user.
 

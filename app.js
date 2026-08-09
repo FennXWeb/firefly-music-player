@@ -75,7 +75,8 @@ let renderedLibraryRevision = 0;
 let dynamicViewRefreshTimer = null;
 let discordPresenceState = { status:'disabled', error:'' };
 let lastDiscordProgressSync = 0;
-let accountState = { signedIn:false, configured:false, status:'idle', storageUsed:0, storageLimit:150*1024*1024 };
+const ACCOUNT_STORAGE_LIMIT_BYTES = 256 * 1024 * 1024 * 1024;
+let accountState = { signedIn:false, configured:false, status:'idle', storageUsed:0, storageLimit:ACCOUNT_STORAGE_LIMIT_BYTES };
 let accountSyncState = { status:'idle' };
 let localStateSavedAt = 0;
 const VIDEO_RECHECK_MS = 14 * 24 * 60 * 60 * 1000;
@@ -287,7 +288,7 @@ async function initializePersistence() {
   configureDiscordPresence();
   initializeAccount();
 }
-function formatStorage(bytes=0){const value=Math.max(0,Number(bytes)||0);return value>=1024*1024?`${(value/1024/1024).toFixed(value>=100*1024*1024?0:1)} MB`:`${Math.ceil(value/1024)} KB`}
+function formatStorage(bytes=0){const value=Math.max(0,Number(bytes)||0);return value>=1024**4?`${(value/1024**4).toFixed(value>=100*1024**4?0:1)} TB`:value>=1024**3?`${(value/1024**3).toFixed(value>=100*1024**3?0:1)} GB`:value>=1024**2?`${(value/1024**2).toFixed(value>=100*1024**2?0:1)} MB`:`${Math.ceil(value/1024)} KB`}
 function applyCloudState(payload,{notify=true}={}){
   const cloud=payload?.state;if(!cloud)return false;
   const localFolders=liveFolders,syncEnabled=settings.cloudSyncEnabled;
@@ -298,6 +299,7 @@ async function initializeAccount(){
   if(!window.firefly?.getAccountStatus)return;
   try{const status=await window.firefly.getAccountStatus();accountState={...accountState,...status,status:'ready'};if(status.signedIn&&settings.cloudSyncEnabled){const payload=await window.firefly.restoreAccountCloud().catch(()=>null),cloudTime=Date.parse(payload?.syncedAt||payload?.state?.cloudSnapshot?.createdAt||'')||0;if(payload&&cloudTime>localStateSavedAt)applyCloudState(payload,{notify:false});else if(localStateSavedAt>cloudTime+1000)window.firefly.syncAccountNow(currentLibraryState()).catch(()=>{})}}
   catch(error){accountState={...accountState,status:'offline',error:error.message}}
+  updateAccountControl();
   if(currentView==='settings'&&settingsTab==='account')renderSettings();
 }
 function toast(title, detail = '') {
@@ -383,6 +385,17 @@ function renderSidebarPlaylists() {
   host.innerHTML = customPlaylists.length ? customPlaylists.slice(0,6).map(p => `<button data-sidebar-playlist="${p.id}">${playlistCoverMarkup(p,'playlist-cover-mini')}<span><b>${esc(p.title)}</b><small>${playlistTracks(p).length} songs</small></span></button>`).join('') : `<div class="sidebar-empty">No playlists yet.<br>Use + to create one.</div>`;
 }
 
+function accountDisplayName(){return String(accountState.user?.name||accountIdentity()).trim()||'Ignifire listener'}
+function accountInitials(name=accountDisplayName()){
+  const words=String(name).trim().split(/\s+/).filter(Boolean);
+  return (words.length>1?`${words[0][0]}${words.at(-1)[0]}`:words[0]?.slice(0,1)||'I').toLocaleUpperCase();
+}
+function updateAccountControl(){
+  const button=$('#accountControl');if(!button)return;
+  if(accountState.signedIn){const name=accountDisplayName();button.className='avatar account-control';button.textContent=accountInitials(name);button.title=`${name} · Account settings`;button.setAttribute('aria-label',`Open account settings for ${name}`)}
+  else{button.className='avatar account-control account-sign-in';button.innerHTML='<span>Sign in</span>';button.title='Sign in to Ignifire';button.setAttribute('aria-label','Open sign-in settings')}
+}
+
 function pageHead(eyebrow, title, description, tools = '') {
   return `<div class="page-head"><div><div class="eyebrow">${eyebrow}</div><h1>${title}</h1><p>${description}</p></div>${tools ? `<div class="head-tools">${tools}</div>`:''}</div>`;
 }
@@ -391,6 +404,7 @@ function render() {
   // Only the replaceable library view is rebuilt. The audio element, transport,
   // active queue, and playback clock live outside it and continue uninterrupted.
   renderSidebarPlaylists();
+  updateAccountControl();
   view.style.animation = 'none';
   requestAnimationFrame(() => { view.style.animation = ''; });
   if (currentView === 'home') renderHome();
@@ -935,7 +949,7 @@ async function configureDiscordPresence(notify=false){
 function discordSettingsMarkup(){return `<div class="settings-section discord-settings-section"><div class="settings-section-heading"><span><small class="discord-kicker">DISCORD</small><h3>Rich Presence</h3></span></div>${settingToggle('discordRichPresence','Share listening activity','Show the current track, artist, album, and playback state on your Discord profile')}${settingToggle('discordShowTrack','Show track title','Share the title of the song that is playing')}${settingToggle('discordShowAlbum','Show album name','Include the album alongside the artist')}${settingToggle('discordShowPaused','Show paused status','Keep Rich Presence visible while playback is paused')}${settingSelect('discordTimeDisplay','Playback timer','Choose whether Discord shows elapsed or remaining time',[['elapsed','Elapsed time'],['remaining','Time remaining'],['off','Hidden']])}${settingToggle('discordShareArtwork','Share online album artwork','Use HTTPS cover artwork when Discord supports the source')}${settingToggle('discordShowButton','Show Ignifire button','Add a button linking friends to the Ignifire project')}<div class="setting-row discord-status-row"><div id="discordPresenceStatus" class="discord-presence-status"><i></i><span><b>Status</b><small>Checking the connection…</small></span></div><button class="ghost" id="reconnectDiscord">Reconnect</button></div></div>`}
 function accountIdentity(){const user=accountState.user||{};return user.email&&!/@phone\.(?:firefly|ignifire)\.invalid$/i.test(String(user.email))?user.email:user.phoneNumber||user.name||'Ignifire listener'}
 function accountSettingsMarkup(){
-  const used=Number(accountState.storageUsed)||0,limit=Number(accountState.storageLimit)||150*1024*1024,percent=Math.min(100,used/Math.max(1,limit)*100),identity=accountIdentity();
+  const used=Number(accountState.storageUsed)||0,limit=Number(accountState.storageLimit)||ACCOUNT_STORAGE_LIMIT_BYTES,percent=Math.min(100,used/Math.max(1,limit)*100),identity=accountIdentity();
   if(!accountState.signedIn)return `<header class="account-settings-header"><span class="eyebrow">IGNIFIRE ACCOUNT</span><h2>Your library, wherever you listen</h2><p>Sign in securely with email, phone, password, a one-time code, or a passkey.</p></header><div class="settings-section account-intro-section"><div class="account-orbit"><i></i><i></i><i></i><span>${icon('spark')}</span></div><p>Playlists, library metadata, settings, artwork, listening history, and available music files can follow your account. Cloud backup stays off until you enable it.</p><div class="account-actions"><button class="primary" id="accountSignIn">Sign in</button><button class="ghost" id="accountCreate">Create account</button></div></div><div class="settings-section"><h3>Connect this app</h3><div class="setting-row"><div><b>Browser connection code</b><small>After signing in securely in your browser, paste the short-lived code here</small></div><span class="account-code-entry"><input id="accountConnectionCode" type="text" placeholder="Paste code" autocomplete="one-time-code"><button class="ghost" id="accountClaimCode">Connect</button></span></div></div>`;
   return `<header class="account-settings-header signed-in"><span class="eyebrow">IGNIFIRE ACCOUNT</span><h2>${esc(accountState.user?.name||'Your cloud library')}</h2><p>${esc(identity)} · connected securely</p></header><div class="settings-section"><div class="account-profile-row"><span class="account-avatar">${esc((accountState.user?.name||identity).slice(0,1).toUpperCase())}</span><span><b>${esc(accountState.user?.name||identity)}</b><small>${esc(identity)}</small></span><button class="ghost" id="accountManagePasskeys">Manage passkeys ↗</button></div>${settingToggle('cloudSyncEnabled','Cloud backup & sync','Back up Ignifire data and download the newest library after signing in on another PC')}<div class="account-storage"><span><b>${formatStorage(used)} used</b><small>${formatStorage(limit)} included with this account</small></span><em>${Math.round(percent)}%</em><i><u style="width:${percent}%"></u></i></div><div class="setting-row"><div><b>Sync status</b><small>${accountSyncState.status==='syncing'?'Uploading changes securely…':accountSyncState.status==='error'?esc(accountSyncState.error||'Sync could not finish'):accountSyncState.status==='synced'?`Protected backup updated${accountSyncState.syncedAt?` · ${new Date(accountSyncState.syncedAt).toLocaleString()}`:''}`:settings.cloudSyncEnabled?'Changes sync automatically in the background':'Cloud sync is disabled'}</small></div><span class="account-sync-actions"><button class="ghost" id="accountRestore">Download cloud copy</button><button class="primary" id="accountSyncNow" ${settings.cloudSyncEnabled?'':'disabled'}>Sync now</button></span></div><div class="setting-row"><div><b>Sign out on this PC</b><small>Local music and settings stay on this computer</small></div><button class="ghost danger" id="accountSignOut">Sign out</button></div></div>`;
 }
@@ -978,6 +992,7 @@ function settingsPanelMarkup(tab){
 }
 
 function renderSettings() {
+  updateAccountControl();
   const tabs=[['appearance','Appearance'],['playback','Playback'],['library','Library'],['account','Account & sync'],['integrations','Integrations'],['privacy','Privacy & control']];
   view.innerHTML = pageHead('MAKE IT YOURS','Settings','Tune every part of Ignifire without interrupting playback.') + `<div class="settings-grid"><nav class="settings-menu">${tabs.map(([value,label])=>`<button class="${settingsTab===value?'active':''}" data-settings-tab="${value}">${label}</button>`).join('')}</nav><section class="settings-panel" data-settings-panel="${settingsTab}">${settingsPanelMarkup(settingsTab)}</section></div>`;
   if(settingsTab==='integrations'){const sections=$$('.settings-section',view);(sections[1]||sections[0])?.insertAdjacentHTML(sections[1]?'beforebegin':'afterend',discordSettingsMarkup());updateDiscordStatusView()}
@@ -993,7 +1008,7 @@ function renderSettings() {
   if($('#accountSignIn'))$('#accountSignIn').onclick=()=>openAccountPortal('signin');if($('#accountCreate'))$('#accountCreate').onclick=()=>openAccountPortal('signup');if($('#accountManagePasskeys'))$('#accountManagePasskeys').onclick=()=>openAccountPortal('passkeys');
   if($('#accountClaimCode'))$('#accountClaimCode').onclick=claimAccountConnection;if($('#accountConnectionCode'))$('#accountConnectionCode').onkeydown=e=>{if(e.key==='Enter')claimAccountConnection()};
   if($('#accountSyncNow'))$('#accountSyncNow').onclick=syncAccountNow;if($('#accountRestore'))$('#accountRestore').onclick=restoreAccountCloud;
-  if($('#accountSignOut'))$('#accountSignOut').onclick=()=>confirmRemove('Sign out of Ignifire?','Your local library stays on this PC. Cloud backup will stop until you sign in again.',async()=>{await window.firefly.signOutAccount();settings.cloudSyncEnabled=false;accountState={signedIn:false,configured:true,status:'ready',storageUsed:0,storageLimit:150*1024*1024};saveLibrary();renderSettings();toast('Signed out on this PC')});
+  if($('#accountSignOut'))$('#accountSignOut').onclick=()=>confirmRemove('Sign out of Ignifire?','Your local library stays on this PC. Cloud backup will stop until you sign in again.',async()=>{await window.firefly.signOutAccount();settings.cloudSyncEnabled=false;accountState={signedIn:false,configured:true,status:'ready',storageUsed:0,storageLimit:ACCOUNT_STORAGE_LIMIT_BYTES};saveLibrary();renderSettings();toast('Signed out on this PC')});
   if($('#openaiKey'))$('#openaiKey').onchange=e=>{credentials.openaiKey=e.target.value.trim();saveCredentials();if(credentials.openaiKey)albums.filter(album=>album.dynamicCaseArt?.autoGenerate).forEach(queueDefaultDynamicCase);toast('OpenAI key saved','Stored with Windows encryption.')};
   if($('#openDataFolder'))$('#openDataFolder').onclick=()=>window.firefly?.openDataDirectory();if($('#manageLiveFolders'))$('#manageLiveFolders').onclick=()=>localLiveFolders().length?openLiveFoldersModal():addLiveFolder();if($('#connectSuno'))$('#connectSuno').onclick=connectSunoModal;
   if($('#resetSettings'))$('#resetSettings').onclick=()=>confirmRemove('Reset preferences?','Music, playlists, artwork, and connections will stay intact.',()=>{const channel=settings.updateChannel;settings={...defaultSettings,updateChannel:channel};shuffleEnabled=settings.shuffle;repeatMode=settings.repeatMode;visualizerStyle=settings.visualizerStyle;applySettings();saveLibrary();configureDiscordPresence();renderSettings();toast('Preferences reset')});
@@ -1771,6 +1786,7 @@ $('#shelfToggle').onclick=()=>currentView==='shelf'?navigate('albums'):navigate(
 const historyButtons=$$('.history button');if(historyButtons.length>=2){historyButtons[0].onclick=historyBack;historyButtons[1].onclick=historyForward;updateHistoryControls()}
 $('#bulkSelectionBar').addEventListener('click',event=>{const action=event.target.closest('[data-bulk-action]');if(action)runBulkAction(action.dataset.bulkAction)});
 $('#importTrigger').onclick=showImportMenu;
+$('#accountControl').onclick=()=>{settingsTab='account';navigate('settings')};
 $('#audioInput').onchange=e=>{const target=e.target.dataset.targetTrack?allTracks().find(t=>t.id===e.target.dataset.targetTrack):null;if(e.target.files.length)importAudioEntries(normalizeBrowserFiles(e.target.files),target);e.target.value='';e.target.dataset.targetTrack=''};
 $('#folderInput').onchange=e=>{if(e.target.files.length){const entries=normalizeBrowserFiles(e.target.files),first=(entries[0].relativePath||'Imported folder').split('/')[0];importFolderEntries({name:first,entries})}e.target.value=''};
 $('#screenshotInput').onchange=e=>{if(e.target.files[0])screenshotWorkflow(e.target.files[0]);e.target.value=''};

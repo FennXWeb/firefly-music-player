@@ -1,9 +1,9 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.37",
+  "version": "0.1.38",
   "publishedAt": "2026-08-09T01:18:40.3596450Z",
-  "notes": "Uses accounts.ignifire.app as Ignifire's built-in account service, removes the account-server setting and legacy endpoint storage, simplifies the signed-out account page, and removes the redundant read-only Discord Rich Presence label.",
+  "notes": "Makes the top-right account control reflect the signed-in user's initials, routes it to Account & sync, shows a Sign in action when signed out, and raises the default cloud quota from 150 MB to 256 GB for new and existing accounts.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.37/Ignifire-0.1.37-Setup.exe",
   "sha256": "0E5CE8860A9280ED563732705098D2E6050A9646FA0757034260D818AB967816"
 }

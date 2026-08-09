@@ -6,7 +6,10 @@ import { fromNodeHeaders } from 'better-auth/node';
 import { auth, pool } from './auth.js';
 
 const storageRoot = path.resolve(process.env.STORAGE_ROOT || path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'storage'));
-const defaultQuota = Math.max(1024 * 1024, Number(process.env.DEFAULT_STORAGE_LIMIT_BYTES) || 157286400);
+const legacyDefaultQuota = 157286400;
+const standardQuota = 256 * 1024 * 1024 * 1024;
+const configuredQuota = Number(process.env.DEFAULT_STORAGE_LIMIT_BYTES);
+const defaultQuota = Math.max(1024 * 1024, configuredQuota > 0 && configuredQuota !== legacyDefaultQuota ? configuredQuota : standardQuota);
 const encryptionKey = (() => {
   const value = Buffer.from(process.env.STORAGE_ENCRYPTION_KEY || '', 'base64');
   if (value.length !== 32) throw new Error('STORAGE_ENCRYPTION_KEY must be exactly 32 random bytes encoded as base64.');
@@ -19,6 +22,10 @@ async function ensureAccount(client, userId) {
   await client.query(
     'INSERT INTO firefly_storage_accounts (user_id, quota_bytes, usage_bytes) VALUES ($1, $2, 0) ON CONFLICT (user_id) DO NOTHING',
     [userId, defaultQuota]
+  );
+  await client.query(
+    'UPDATE firefly_storage_accounts SET quota_bytes=$1, updated_at=CURRENT_TIMESTAMP WHERE user_id=$2 AND quota_bytes=$3',
+    [defaultQuota, userId, legacyDefaultQuota]
   );
   const { rows: [account] } = await client.query(
     'SELECT quota_bytes, usage_bytes FROM firefly_storage_accounts WHERE user_id=$1 FOR UPDATE',

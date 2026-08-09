@@ -3,10 +3,16 @@
 
 CREATE TABLE IF NOT EXISTS public.firefly_storage_accounts (
   user_id TEXT PRIMARY KEY,
-  quota_bytes BIGINT NOT NULL DEFAULT 157286400 CHECK (quota_bytes >= 0),
+  quota_bytes BIGINT NOT NULL DEFAULT 274877906944 CHECK (quota_bytes >= 0),
   usage_bytes BIGINT NOT NULL DEFAULT 0 CHECK (usage_bytes >= 0),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE public.firefly_storage_accounts
+  ALTER COLUMN quota_bytes SET DEFAULT 274877906944;
+UPDATE public.firefly_storage_accounts
+  SET quota_bytes = 274877906944, updated_at = CURRENT_TIMESTAMP
+  WHERE quota_bytes = 157286400;
 
 CREATE TABLE IF NOT EXISTS public.firefly_desktop_codes (
   code_hash CHAR(64) PRIMARY KEY,
