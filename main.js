@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, dialog, ipcMain, safeStorage, session, net, globalShortcut, nativeImage } = require('electron');
+const { app, BrowserWindow, shell, dialog, ipcMain, safeStorage, session, net, globalShortcut, nativeImage, protocol, screen } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const fsNative = require('fs');
@@ -30,6 +30,7 @@ const sunoDirectory = path.join(dataDirectory, 'suno');
 const updatesDirectory = path.join(dataDirectory, 'updates');
 const zipImportDirectory = path.join(dataDirectory, 'zip-imports');
 const cloudCacheDirectory = path.join(dataDirectory, 'cloud-library');
+const managedMusicDirectory = path.join(dataDirectory, 'music');
 const apiPassBaseUrl = 'https://api.apipass.dev';
 const ignifireAccountEndpoint = 'https://accounts.ignifire.app';
 const updateRepository = 'FennXWeb/firefly-music-player';
@@ -50,6 +51,14 @@ const liveEntryCache = new Map();
 let cloudSyncTimer = null;
 let cloudSyncInFlight = false;
 let pendingCloudState = null;
+let cloudQuotaBlocked = false;
+let mediaOverlayWindow = null;
+let mediaOverlayTimer = null;
+
+protocol.registerSchemesAsPrivileged([{
+  scheme: 'ignifire-cloud',
+  privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true }
+}]);
 
 const taskbarIconData = {
   previous: 'iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAS0lEQVR4nO3POwoAMAhEQe9/6U2VRvCzKoSAr14GFdmYACAc3DLYCAhVGdRQC7QwGvQgGsz2Dhx/OXt5CfTQMmjBbVBvox3VOPhnB5a2xkg1hCLdAAAAAElFTkSuQmCC',
@@ -72,7 +81,25 @@ function taskbarIcon(name) {
 function sendMediaCommand(command, win = primaryWindow) {
   if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return false;
   win.webContents.send('media:command', command);
+  if ((command === 'next' || command === 'previous') && (win.isMinimized() || !win.isVisible() || !win.isFocused())) {
+    setTimeout(() => showMediaOverlay(), 280);
+  }
   return true;
+}
+function escapeOverlayText(value = '') { return String(value).replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character])); }
+function showMediaOverlay() {
+  if (process.platform !== 'win32' || !nativePlaybackState.hasTrack || !primaryWindow || primaryWindow.isDestroyed()) return;
+  const workArea = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+  if (!mediaOverlayWindow || mediaOverlayWindow.isDestroyed()) {
+    mediaOverlayWindow = new BrowserWindow({ width: 390, height: 104, frame: false, transparent: true, resizable: false, focusable: false, skipTaskbar: true, alwaysOnTop: true, show: false, hasShadow: false, webPreferences: { contextIsolation: true, sandbox: true } });
+    mediaOverlayWindow.setIgnoreMouseEvents(true);
+    mediaOverlayWindow.on('closed', () => { mediaOverlayWindow = null; });
+  }
+  const title = escapeOverlayText(nativePlaybackState.title || 'Now playing'), artist = escapeOverlayText(nativePlaybackState.artist || nativePlaybackState.album || 'Ignifire');
+  const html = `<!doctype html><meta charset="utf-8"><style>*{box-sizing:border-box}html,body{margin:0;background:transparent;overflow:hidden;font-family:"Segoe UI Variable","Segoe UI",sans-serif;color:#fff}.card{height:92px;margin:6px;border:1px solid #ffffff3a;border-radius:24px;display:grid;grid-template-columns:62px minmax(0,1fr) auto;align-items:center;gap:14px;padding:14px 18px;background:radial-gradient(circle at 8% 10%,#ff7b6652,transparent 45%),linear-gradient(135deg,#272329e8,#101012ec);box-shadow:inset 0 1px #ffffff52,inset 0 -1px #0008,0 18px 45px #000b;backdrop-filter:blur(30px) saturate(1.5);animation:in .42s cubic-bezier(.16,1,.3,1)}.mark{width:58px;height:58px;border-radius:19px;display:grid;place-items:center;background:linear-gradient(145deg,#ffab63,#f64e63 58%,#8d5bff);box-shadow:inset 0 1px #fff8,0 10px 25px #f45f4740}.mark:after{content:'◆';font-size:25px;color:#fff;text-shadow:0 0 18px #fff}.copy{min-width:0}.copy small{display:block;color:#ffb69c;font-size:9px;font-weight:800;letter-spacing:.14em}.copy b,.copy span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.copy b{font-size:16px;margin-top:3px}.copy span{color:#aaa4ad;font-size:11px;margin-top:1px}.bars{display:flex;align-items:end;gap:3px;height:25px}.bars i{width:3px;border-radius:5px;background:#ff9273;animation:b .7s ease-in-out infinite alternate}.bars i:nth-child(1){height:35%}.bars i:nth-child(2){height:100%;animation-delay:-.3s}.bars i:nth-child(3){height:58%;animation-delay:-.5s}@keyframes in{from{opacity:0;transform:translateX(35px) scale(.96)}to{opacity:1;transform:none}}@keyframes b{to{height:25%}}</style><div class="card"><div class="mark"></div><div class="copy"><small>NOW PLAYING</small><b>${title}</b><span>${artist}</span></div><div class="bars"><i></i><i></i><i></i></div></div>`;
+  mediaOverlayWindow.setPosition(workArea.x + workArea.width - 406, workArea.y + workArea.height - 124, false);
+  mediaOverlayWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).then(() => mediaOverlayWindow?.showInactive());
+  clearTimeout(mediaOverlayTimer);mediaOverlayTimer = setTimeout(() => mediaOverlayWindow?.hide(), 2800);mediaOverlayTimer.unref?.();
 }
 function updateTaskbarControls(win = primaryWindow) {
   if (process.platform !== 'win32' || !win || win.isDestroyed()) return;
@@ -242,6 +269,66 @@ async function writeBufferAtomic(filePath, value) {
     await fs.rename(temporaryPath, filePath);
   });
 }
+function isPathInside(filePath, directory) {
+  if (!filePath || !directory) return false;
+  const relative = path.relative(path.resolve(directory), path.resolve(filePath));
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+function isManagedAudioPath(filePath) { return [managedMusicDirectory, cloudCacheDirectory, sunoDirectory].some(directory => isPathInside(filePath, directory)); }
+async function hashFile(filePath) {
+  return new Promise((resolve, reject) => {
+    const digest = crypto.createHash('sha256'), stream = fsNative.createReadStream(filePath);
+    stream.on('data', chunk => digest.update(chunk));stream.on('error', reject);stream.on('end', () => resolve(digest.digest('hex')));
+  });
+}
+function managedTrackPath(hash, fileName = 'track.audio') {
+  const extension = path.extname(fileName).toLowerCase();
+  const safeExtension = audioExtensions.has(extension) ? extension : '.audio';
+  return path.join(managedMusicDirectory, `${hash}${safeExtension}`);
+}
+function cloudCacheTrackPath(hash, fileName = 'track.audio') {
+  const extension = path.extname(fileName).toLowerCase();
+  return path.join(cloudCacheDirectory, `${hash}${audioExtensions.has(extension) ? extension : '.audio'}`);
+}
+async function ensureManagedAudioCopy(sourcePath, knownHash = '') {
+  const resolved = path.resolve(sourcePath), hash = knownHash || await hashFile(resolved), destination = managedTrackPath(hash, resolved);
+  await fs.mkdir(managedMusicDirectory, { recursive: true });
+  try { if ((await fs.stat(destination)).isFile()) return { path: destination, hash }; } catch { /* Copy below. */ }
+  const temporary = `${destination}.${process.pid}.importing`;
+  await fs.copyFile(resolved, temporary);
+  try { await fs.rename(temporary, destination); }
+  catch (error) { await fs.rm(temporary, { force: true });try { if (!(await fs.stat(destination)).isFile()) throw error; } catch { throw error; } }
+  return { path: destination, hash };
+}
+function cloudTrackUrl(cloudFile = {}) {
+  const hash = String(cloudFile.hash || '').toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(hash)) return '';
+  return `ignifire-cloud://track/${hash}/${encodeURIComponent(cloudFile.name || 'track.audio')}`;
+}
+async function migrateManagedState(state) {
+  if (!state || !Array.isArray(state.albums)) return { state, changed: false };
+  let changed = false;
+  for (const album of state.albums) for (const track of album.tracks || []) {
+    if (track.pending) continue;
+    const filePath = String(track.path || '');
+    if (filePath && !isManagedAudioPath(filePath)) {
+      try {
+        const managed = await ensureManagedAudioCopy(filePath, track.cloudFile?.hash || '');
+        track.path = managed.path;track.url = pathToFileURL(managed.path).href;track.managedFile = true;changed = true;
+      } catch { if (track.cloudFile?.hash) { track.path = null;track.url = cloudTrackUrl(track.cloudFile);changed = true; } }
+    } else if (filePath) {
+      try {
+        if (!(await fs.stat(filePath)).isFile()) throw new Error('Managed track is unavailable.');
+        track.managedFile = true;const localUrl = pathToFileURL(filePath).href;if (track.url !== localUrl) { track.url = localUrl;changed = true; }
+      } catch {
+        track.path = null;track.managedFile = false;track.url = track.cloudFile?.hash ? cloudTrackUrl(track.cloudFile) : '';changed = true;
+      }
+    } else if (track.cloudFile?.hash) {
+      const streamUrl = cloudTrackUrl(track.cloudFile);if (track.url !== streamUrl) { track.url = streamUrl;changed = true; }
+    }
+  }
+  return { state, changed };
+}
 async function accountCredentials() {
   const saved = await readJson(credentialsPath, {});
   return { token: decryptSecret(saved.accountToken) };
@@ -279,7 +366,7 @@ async function accountStatus() {
 }
 async function uploadCloudObject(filePath, endpoint, token) {
   const stats = await fs.stat(filePath);if (!stats.isFile()) return null;
-  const hash = await new Promise((resolve, reject) => {const digest=crypto.createHash('sha256'),stream=fsNative.createReadStream(filePath);stream.on('data',chunk=>digest.update(chunk));stream.on('error',reject);stream.on('end',()=>resolve(digest.digest('hex')))});
+  const hash = await hashFile(filePath);
   const name = path.basename(filePath).slice(0, 180), encodedName = Buffer.from(name, 'utf8').toString('base64url');
   const existing = await accountRequest(`/v1/sync/objects/${hash}`, { method: 'HEAD', endpoint, token }).catch(error => error.status === 404 ? null : Promise.reject(error));
   if (!existing) {
@@ -307,7 +394,7 @@ async function portableCloudState(state, endpoint, token) {
   for (const album of portable.albums || []) for (const track of album.tracks || []) {
     const original = sourceTracks.get(track.id), filePath = String(original?.path || '');
     track.path = null;track.url = null;delete track.liveFolderId;delete track.cloudSourceId;
-    if (!filePath) continue;
+    if (!filePath) { if (original?.cloudFile?.hash) track.cloudFile = original.cloudFile;continue; }
     try { track.cloudFile = await uploadCloudObject(filePath, endpoint, token); }
     catch (error) { if (error.status === 413) throw error;track.cloudFileUnavailable = true; }
   }
@@ -320,15 +407,32 @@ async function uploadCloudSnapshot(state, { manual = false } = {}) {
   const endpoint = ignifireAccountEndpoint, enabled = Boolean(state?.settings?.cloudSyncEnabled);
   const { token } = await accountCredentials();
   if (!enabled || !endpoint || !token) return { skipped: true };
+  if (cloudQuotaBlocked && !manual) return { skipped: true, quotaBlocked: true };
+  if (manual) cloudQuotaBlocked = false;
   cloudSyncInFlight = true;
   try {
     const portable = await portableCloudState(state, endpoint, token);
     const response = await accountRequest('/v1/sync/snapshot', { method: 'PUT', endpoint, token, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ state: portable, deviceName: process.env.COMPUTERNAME || 'Windows PC' }) });
     const result = await response.json();
+    const cloudTracks = new Map((portable.albums || []).flatMap(album => (album.tracks || []).filter(track => track.cloudFile?.hash).map(track => [track.id, track.cloudFile])));
+    const removedLocalTrackIds = [];
+    for (const album of pendingCloudState?.albums || []) for (const track of album.tracks || []) if (cloudTracks.has(track.id)) track.cloudFile = cloudTracks.get(track.id);
+    if (!state?.settings?.autoDownloadCloudLibrary) {
+      for (const album of state?.albums || []) for (const track of album.tracks || []) {
+        if (!cloudTracks.has(track.id) || !track.path || !isManagedAudioPath(track.path)) continue;
+        await fs.rm(track.path, { force: true }).catch(() => {});removedLocalTrackIds.push(track.id);
+        const pendingTrack=(pendingCloudState?.albums||[]).flatMap(album=>album.tracks||[]).find(item=>item.id===track.id);if(pendingTrack){pendingTrack.path=null;pendingTrack.url=cloudTrackUrl(cloudTracks.get(track.id));pendingTrack.managedFile=false}
+      }
+    }
+    result.trackFiles = [...cloudTracks].map(([id, cloudFile]) => ({ id, cloudFile }));
+    result.removedLocalTrackIds = removedLocalTrackIds;
     primaryWindow?.webContents?.send('account:sync-status', { status: 'synced', ...result });
     return result;
   } catch (error) {
-    primaryWindow?.webContents?.send('account:sync-status', { status: 'error', error: error.message });
+    if (error.status === 413) cloudQuotaBlocked = true;
+    const code = error.status === 413 ? 'STORAGE_QUOTA' : '';
+    primaryWindow?.webContents?.send('account:sync-status', { status: 'error', error: error.message, code });
+    if (code) error.code = code;
     if (manual) throw error;
     return { error: error.message };
   } finally {
@@ -344,18 +448,42 @@ async function downloadCloudSnapshot() {
   const response = await accountRequest('/v1/sync/snapshot', { endpoint: base, token: stored.token });
   if (response.status === 204) return null;
   const payload = await response.json(), state = payload.state;
-  await fs.mkdir(cloudCacheDirectory, { recursive: true });
+  const autoDownload = Boolean(state?.settings?.autoDownloadCloudLibrary);
+  if (autoDownload) await fs.mkdir(cloudCacheDirectory, { recursive: true });
   for (const album of state?.albums || []) for (const track of album.tracks || []) {
     if (!track.cloudFile?.hash) continue;
-    const stem = `${track.cloudFile.hash.slice(0,16)}-${safeFileStem(track.cloudFile.name || `${track.id}.audio`)}`, destination = path.join(cloudCacheDirectory, stem);
+    if (!autoDownload) { track.path = null;track.url = cloudTrackUrl(track.cloudFile);track.managedFile = false;continue; }
+    const destination = cloudCacheTrackPath(track.cloudFile.hash, track.cloudFile.name || `${track.id}.audio`);
     try { await fs.stat(destination); }
     catch {
       const asset = await accountRequest(`/v1/sync/objects/${track.cloudFile.hash}`, { endpoint: base, token: stored.token, headers: { Accept: 'application/octet-stream' } });
       await writeBufferAtomic(destination, Buffer.from(await asset.arrayBuffer()));
     }
-    track.path = destination;track.url = pathToFileURL(destination).href;
+    track.path = destination;track.url = pathToFileURL(destination).href;track.managedFile = true;
   }
   return { ...payload, state };
+}
+async function downloadCloudTracks(tracks = []) {
+  const stored = await accountCredentials();if (!stored.token) throw new Error('Sign in to download cloud tracks.');
+  await fs.mkdir(cloudCacheDirectory, { recursive: true });
+  const results = [];
+  for (const track of Array.isArray(tracks) ? tracks : []) {
+    const cloudFile = track?.cloudFile, hash = String(cloudFile?.hash || '').toLowerCase();if (!/^[a-f0-9]{64}$/.test(hash)) continue;
+    const destination = cloudCacheTrackPath(hash, cloudFile.name || `${track.id}.audio`);
+    try { await fs.stat(destination); }
+    catch { const asset = await accountRequest(`/v1/sync/objects/${hash}`, { headers: { Accept: 'application/octet-stream' } });await writeBufferAtomic(destination, Buffer.from(await asset.arrayBuffer())); }
+    results.push({ id: track.id, path: destination, url: pathToFileURL(destination).href });
+  }
+  return results;
+}
+async function removeCloudDownloads(tracks = []) {
+  const results = [];
+  for (const track of Array.isArray(tracks) ? tracks : []) {
+    if (!track?.cloudFile?.hash || !track.path) continue;
+    if (!isManagedAudioPath(track.path)) continue;
+    await fs.rm(track.path, { force: true });results.push({ id: track.id, url: cloudTrackUrl(track.cloudFile) });
+  }
+  return results;
 }
 function compareVersions(left='',right='') {
   const parse=value=>{const [core,pre='']=String(value).trim().replace(/^v/i,'').split('-',2);return{core:core.split('.').map(part=>Number(part)||0),pre}};
@@ -374,7 +502,7 @@ async function checkForUpdates(channel='stable') {
   const manifest=await response.json();
   if(!manifest||typeof manifest.version!=='string')throw new Error('The update manifest is invalid.');
   const available=compareVersions(manifest.version,app.getVersion())>0;
-  return{available,channel:selected,branch,currentVersion:app.getVersion(),version:manifest.version,notes:String(manifest.notes||''),publishedAt:manifest.publishedAt||null,downloadUrl:available&&allowedUpdateUrl(manifest.downloadUrl)?manifest.downloadUrl:'',sha256:typeof manifest.sha256==='string'?manifest.sha256.toUpperCase():''};
+  return{available,channel:selected,branch,currentVersion:app.getVersion(),version:manifest.version,notes:String(manifest.notes||''),audience:manifest.audience==='user'?'user':'internal',highlights:Array.isArray(manifest.highlights)?manifest.highlights.map(item=>String(item)).slice(0,8):[],publishedAt:manifest.publishedAt||null,downloadUrl:available&&allowedUpdateUrl(manifest.downloadUrl)?manifest.downloadUrl:'',sha256:typeof manifest.sha256==='string'?manifest.sha256.toUpperCase():''};
 }
 async function downloadUpdate(webContents,channel='stable') {
   const update=await checkForUpdates(channel);
@@ -785,8 +913,8 @@ async function entryFor(filePath, root = '') {
   const extension = path.extname(filePath).toLowerCase();
   const entry = {
     name: path.basename(filePath),
-    path: filePath,
-    url: pathToFileURL(filePath).href,
+    path: null,
+    url: '',
     relativePath: root ? path.relative(root, filePath).replaceAll('\\','/') : path.basename(filePath),
     kind: audioExtensions.has(extension) ? 'audio' : 'image'
   };
@@ -819,6 +947,11 @@ async function entryFor(filePath, root = '') {
       entry.metadata = null;
       entry.metadataError = String(error?.code || error?.message || 'Metadata unavailable').slice(0, 180);
     }
+    const managed = await ensureManagedAudioCopy(filePath);
+    entry.path = managed.path;entry.url = pathToFileURL(managed.path).href;entry.managedFile = true;entry.contentHash = managed.hash;
+  } else {
+    const mime = ({'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.bmp':'image/bmp'}[extension] || 'application/octet-stream');
+    entry.url = `data:${mime};base64,${(await fs.readFile(filePath)).toString('base64')}`;
   }
   return entry;
 }
@@ -957,17 +1090,26 @@ app.whenReady().then(() => {
   // Retain the original Windows identity so the Ignifire installer upgrades
   // the existing application instead of creating a second installation.
   if (process.platform === 'win32') app.setAppUserModelId('com.firefly.music');
+  protocol.handle('ignifire-cloud', async request => {
+    try {
+      const resource = new URL(request.url), hash = resource.pathname.split('/').filter(Boolean)[0] || '';
+      if (!/^[a-f0-9]{64}$/i.test(hash)) return new Response('Invalid cloud track.', { status: 400 });
+      const headers = { Accept: request.headers.get('accept') || 'audio/*' }, range = request.headers.get('range');if (range) headers.Range = range;
+      return accountRequest(`/v1/sync/objects/${hash.toLowerCase()}`, { headers });
+    } catch (error) { return new Response(error?.message || 'Cloud track unavailable.', { status: error?.status || 503 }); }
+  });
   registerMediaHotkeys();
   session.defaultSession.webRequest.onBeforeSendHeaders(
     { urls: ['https://www.youtube.com/embed/*'] },
     (details, callback) => callback({ requestHeaders: { ...details.requestHeaders, Referer: 'https://ignifire.local/' } })
   );
-  ipcMain.handle('state:load', async () => ({
-    state: await readJson(statePath, null),
-    dataDirectory
-  }));
+  ipcMain.handle('state:load', async () => {
+    const migrated = await migrateManagedState(await readJson(statePath, null));
+    if (migrated.changed) await writeJsonAtomic(statePath, { ...migrated.state, schemaVersion: 4, savedAt: new Date().toISOString() });
+    return { state: migrated.state, dataDirectory };
+  });
   ipcMain.handle('state:save', async (_event, state) => {
-    await writeJsonAtomic(statePath, { ...state, schemaVersion: 3, savedAt: new Date().toISOString() });
+    await writeJsonAtomic(statePath, { ...state, schemaVersion: 4, savedAt: new Date().toISOString() });
     scheduleCloudBackup(state);
     return true;
   });
@@ -1025,6 +1167,8 @@ app.whenReady().then(() => {
   ipcMain.handle('account:sign-out', async () => {try{await accountRequest('/v1/desktop/session',{method:'DELETE'})}catch{/* Always remove the local credential, even while offline. */}await updateAccountCredentials({ token: '' });return true});
   ipcMain.handle('account:sync-now', async (_event, state) => uploadCloudSnapshot(state, { manual: true }));
   ipcMain.handle('account:restore', async () => downloadCloudSnapshot());
+  ipcMain.handle('account:download-tracks', async (_event, tracks) => downloadCloudTracks(tracks));
+  ipcMain.handle('account:remove-downloads', async (_event, tracks) => removeCloudDownloads(tracks));
   ipcMain.handle('library:choose-files', async () => {
     const result = await dialog.showOpenDialog({
       title: 'Import music',
@@ -1063,6 +1207,7 @@ app.whenReady().then(() => {
   ipcMain.handle('suno:query', async (_event, taskId) => querySunoTask(taskId));
   ipcMain.handle('suno:import-track', async (_event, options) => importSunoTrack(options));
   ipcMain.handle('update:check', async (_event, channel) => checkForUpdates(channel));
+  ipcMain.handle('update:current-release', async () => readJson(path.join(__dirname, 'updates', 'latest.json'), { version: app.getVersion(), audience: 'internal', notes: '' }));
   ipcMain.handle('update:download', async (event, channel) => downloadUpdate(event.sender,channel));
   ipcMain.handle('update:launch', async () => {
     if(!preparedUpdate?.installed)throw new Error('Finish preparing the update first.');

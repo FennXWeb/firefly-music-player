@@ -14,7 +14,7 @@ It provides:
 - SHA-256 integrity checks and per-account file deduplication;
 - AES-256-GCM encryption for every stored cloud object and snapshot.
 - cookie-authenticated, read-only web library access;
-- private byte-range audio streaming for `https://ignifire.app`.
+- private byte-range audio streaming for the Windows app and `https://ignifire.app`.
 
 ## Deployment
 

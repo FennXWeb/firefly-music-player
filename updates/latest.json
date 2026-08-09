@@ -1,9 +1,17 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.40",
-  "publishedAt": "2026-08-09T02:37:28.7838527Z",
-  "notes": "Adds the secure, read-only Ignifire web player backend and production web bundle for ignifire.app, including required login, cloud audio streaming, a reduced library UI, and a stable desktop download link.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.40/Ignifire-0.1.40-Setup.exe",
-  "sha256": "9D8122AF450302720F8EE5DC4C46EB437321E7DD6EBF0F8BF8C6B769E59F3638"
+  "version": "0.1.41",
+  "publishedAt": null,
+  "audience": "user",
+  "highlights": [
+    "Imports now live in Ignifire-managed storage, so removing the original source does not break your library.",
+    "Cloud tracks can stream instantly, download for offline listening, or remove only their safe managed download.",
+    "Cloud and downloaded indicators now appear across songs and albums, with quota-aware upload pausing.",
+    "What’s New and Updates now have clearer homes, alongside a cleaner Settings experience.",
+    "Deeper liquid-glass reflections and a new minimized media-key now-playing popup bring the interface to life."
+  ],
+  "notes": "Adds managed music storage, streaming-first cloud playback, safe cloud download controls, quota-aware sync, a What’s New feed, dedicated update settings, deeper liquid glass, and a minimized media-key now-playing popup.",
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.41/Ignifire-0.1.41-Setup.exe",
+  "sha256": ""
 }

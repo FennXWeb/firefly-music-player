@@ -1,6 +1,6 @@
 {
   "name": "ignifire-music",
-  "version": "0.1.40",
+  "version": "0.1.41",
   "private": true,
   "description": "A highly customizable, local-first music player for Windows.",
   "author": "Ignifire",
@@ -31,6 +31,7 @@
       "app.js",
       "main.js",
       "preload.js",
+      "updates/**/*",
       "assets/**/*",
       "package.json"
     ],

@@ -346,11 +346,19 @@ export async function getObject(req, res, next) {
     );
     if (!rows[0]) return res.status(404).json({ error: 'Cloud file not found.' });
     const data = await decryptFromFile(rows[0].storage_name);
-    res.set({
-      'Content-Type': 'application/octet-stream',
-      'Content-Length': String(data.length),
-      'Content-Disposition': `attachment; filename="${safePart(rows[0].original_name) || 'ignifire-audio'}"`
-    }).send(data);
+    const size = data.length, headers = {
+      'Accept-Ranges': 'bytes',
+      'Content-Type': audioContentType(rows[0].original_name),
+      'Content-Disposition': `inline; filename="${safePart(rows[0].original_name) || 'ignifire-audio'}"`,
+      'Cache-Control': 'private, max-age=3600'
+    };
+    const range = String(req.headers.range || '').match(/^bytes=(\d*)-(\d*)$/);
+    if (!range) return res.set({ ...headers, 'Content-Length': String(size) }).send(data);
+    let start = range[1] ? Number(range[1]) : 0, end = range[2] ? Number(range[2]) : size - 1;
+    if (!range[1] && range[2]) { const suffix = Math.max(0, Number(range[2]));start = Math.max(0, size - suffix);end = size - 1; }
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || start >= size) return res.status(416).set('Content-Range', `bytes */${size}`).end();
+    end = Math.min(end, size - 1);const chunk = data.subarray(start, end + 1);
+    return res.status(206).set({ ...headers, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': String(chunk.length) }).send(chunk);
   } catch (error) { next(error); }
 }
 
