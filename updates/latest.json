@@ -2,7 +2,7 @@
   "channel": "beta",
   "branch": "beta",
   "version": "0.1.43",
-  "publishedAt": null,
+  "publishedAt": "2026-08-09T03:56:50.7664443Z",
   "audience": "user",
   "highlights": [
     "Large libraries no longer trigger desktop cache warnings or duplicate themselves into browser storage.",
@@ -12,5 +12,5 @@
   ],
   "notes": "Fixes oversized desktop caching, externalizes embedded artwork into durable managed files, and adds progressive cloud-track and album sync indicators with live upload progress.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.43/Ignifire-0.1.43-Setup.exe",
-  "sha256": ""
+  "sha256": "D210B8EF3975F042ED61C526E2DC38912A6B57124914C9E522CD3F85A08C3F1C"
 }
