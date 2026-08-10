@@ -2,7 +2,7 @@
   "channel": "beta",
   "branch": "beta",
   "version": "0.1.49",
-  "publishedAt": "2026-08-10T00:35:21.0000000Z",
+  "publishedAt": "2026-08-10T00:40:10.0929015Z",
   "audience": "user",
   "highlights": [
     "Cloud sync now repairs database records whose encrypted audio files were lost during a server redeploy.",
@@ -11,5 +11,5 @@
   ],
   "notes": "Repairs cloud libraries left with stale database rows after Hostinger replaced local encrypted files during a redeploy, and prevents future deployments from storing cloud audio inside the replaceable app directory.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.49/Ignifire-0.1.49-Setup.exe",
-  "sha256": "12A271DB86F09FE71EB5B3D31ADEB34084A8328B8E7DBC0EB9ED23B07A4ED8C5"
+  "sha256": "426D2D8C7E14D60F8679089A1FD7BC4B591308E734F3FA9156D61652C3D9F8C8"
 }
