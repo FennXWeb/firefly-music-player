@@ -5,7 +5,17 @@ import { fileURLToPath } from 'node:url';
 import { fromNodeHeaders } from 'better-auth/node';
 import { auth, pool } from './auth.js';
 
-const storageRoot = path.resolve(process.env.STORAGE_ROOT || path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'storage'));
+const serverRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const configuredStorageRoot = String(process.env.STORAGE_ROOT || '').trim();
+const legacyDeploymentStorage = !configuredStorageRoot || /^\.?[\\/]?storage[\\/]?$/i.test(configuredStorageRoot);
+const persistentStorageRoot = process.env.HOME
+  ? path.join(process.env.HOME, '.ignifire', 'storage')
+  : path.resolve(serverRoot, '..', '.ignifire-storage');
+const storageRoot = path.resolve(
+  process.env.NODE_ENV === 'production' && legacyDeploymentStorage
+    ? persistentStorageRoot
+    : configuredStorageRoot || path.join(serverRoot, 'storage')
+);
 const legacyDefaultQuota = 157286400;
 const standardQuota = 256 * 1024 * 1024 * 1024;
 const configuredQuota = Number(process.env.DEFAULT_STORAGE_LIMIT_BYTES);
@@ -54,6 +64,13 @@ async function decryptFromFile(fileName) {
   const decipher = crypto.createDecipheriv('aes-256-gcm', encryptionKey, payload.subarray(3, 15));
   decipher.setAuthTag(payload.subarray(15, 31));
   return Buffer.concat([decipher.update(payload.subarray(31)), decipher.final()]);
+}
+
+async function storedObjectAvailable(fileName) {
+  try {
+    const stats = await fs.stat(path.join(storageRoot, path.basename(fileName)));
+    return stats.isFile() && stats.size >= 31;
+  } catch { return false; }
 }
 
 function bearer(req) {
@@ -253,7 +270,7 @@ export async function getWebLibrary(req, res, next) {
     await client.query('COMMIT');
     transaction = false;
     let library = null;
-    if (rows[0]) {
+    if (rows[0] && await storedObjectAvailable(rows[0].storage_name)) {
       const data = await decryptFromFile(rows[0].storage_name);
       library = webLibraryState(JSON.parse(data.toString('utf8')));
     }
@@ -280,10 +297,13 @@ export async function getWebLibrary(req, res, next) {
 export async function headObject(req, res, next) {
   try {
     const { rows } = await pool.query(
-      'SELECT size_bytes FROM firefly_sync_objects WHERE user_id=$1 AND content_hash=$2',
+      'SELECT storage_name,size_bytes FROM firefly_sync_objects WHERE user_id=$1 AND content_hash=$2',
       [req.fireflyUserId, req.params.hash]
     );
     if (!rows[0]) return res.sendStatus(404);
+    if (!(await storedObjectAvailable(rows[0].storage_name))) {
+      return res.set('X-Ignifire-Object-State', 'missing').sendStatus(404);
+    }
     const size = String(rows[0].size_bytes);
     res.set({ 'X-Ignifire-Object-Size': size, 'X-Firefly-Object-Size': size }).status(200).end();
   } catch (error) { next(error); }
@@ -301,13 +321,24 @@ export async function putObject(req, res, next) {
     transaction = true;
     const account = await ensureAccount(client, req.fireflyUserId);
     const { rows: existing } = await client.query(
-      'SELECT size_bytes FROM firefly_sync_objects WHERE user_id=$1 AND content_hash=$2 FOR UPDATE',
+      'SELECT storage_name,size_bytes FROM firefly_sync_objects WHERE user_id=$1 AND content_hash=$2 FOR UPDATE',
       [req.fireflyUserId, hash]
     );
-    if (existing[0]) {
+    if (existing[0] && await storedObjectAvailable(existing[0].storage_name)) {
       await client.query('COMMIT');
       transaction = false;
       return res.json({ deduplicated: true, size: Number(existing[0].size_bytes) });
+    }
+    if (existing[0]) {
+      await client.query(
+        'DELETE FROM firefly_sync_objects WHERE user_id=$1 AND content_hash=$2',
+        [req.fireflyUserId, hash]
+      );
+      await client.query(
+        'UPDATE firefly_storage_accounts SET usage_bytes=GREATEST(0,usage_bytes-$1),updated_at=CURRENT_TIMESTAMP WHERE user_id=$2',
+        [Number(existing[0].size_bytes) || 0, req.fireflyUserId]
+      );
+      account.usage_bytes = Math.max(0, Number(account.usage_bytes) - (Number(existing[0].size_bytes) || 0));
     }
     if (Number(account.usage_bytes) + body.length > Number(account.quota_bytes)) {
       await client.query('ROLLBACK');
@@ -359,7 +390,10 @@ export async function getObject(req, res, next) {
     if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || start >= size) return res.status(416).set('Content-Range', `bytes */${size}`).end();
     end = Math.min(end, size - 1);const chunk = data.subarray(start, end + 1);
     return res.status(206).set({ ...headers, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': String(chunk.length) }).send(chunk);
-  } catch (error) { next(error); }
+  } catch (error) {
+    if (error?.code === 'ENOENT') return res.status(404).json({ error: 'This cloud file needs to be uploaded again.' });
+    next(error);
+  }
 }
 
 function audioContentType(fileName = '') {
@@ -399,7 +433,10 @@ export async function streamWebObject(req, res, next) {
     end = Math.min(end, size - 1);
     const chunk = data.subarray(start, end + 1);
     res.status(206).set({ ...commonHeaders, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': String(chunk.length) }).send(chunk);
-  } catch (error) { next(error); }
+  } catch (error) {
+    if (error?.code === 'ENOENT') return res.status(404).json({ error: 'This cloud track needs to be uploaded again.' });
+    next(error);
+  }
 }
 
 export async function putSnapshot(req, res, next) {
@@ -485,6 +522,7 @@ export async function getSnapshot(req, res, next) {
       [req.fireflyUserId]
     );
     if (!rows[0]) return res.status(204).end();
+    if (!(await storedObjectAvailable(rows[0].storage_name))) return res.status(204).end();
     const data = await decryptFromFile(rows[0].storage_name);
     res.json({
       state: JSON.parse(data.toString('utf8')),

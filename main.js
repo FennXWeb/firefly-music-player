@@ -446,7 +446,10 @@ async function uploadCloudObject(filePath, endpoint, token) {
   const stats = await fs.stat(filePath);if (!stats.isFile()) return null;
   const hash = await hashFile(filePath);
   const name = path.basename(filePath).slice(0, 180), encodedName = Buffer.from(name, 'utf8').toString('base64url');
-  const existing = await accountRequest(`/v1/sync/objects/${hash}`, { method: 'HEAD', endpoint, token }).catch(error => error.status === 404 ? null : Promise.reject(error));
+  const existing = await accountRequest(`/v1/sync/objects/${hash}`, { method: 'HEAD', endpoint, token }).catch(error => {
+    if (error.status === 404 || error.status >= 500) return null;
+    throw error;
+  });
   if (!existing) {
     const body = await fs.readFile(filePath);
     await accountRequest(`/v1/sync/objects/${hash}`, { method: 'PUT', endpoint, token, body, headers: { 'Content-Type': 'application/octet-stream', 'X-Ignifire-Filename': encodedName, 'X-Firefly-Filename': encodedName } });

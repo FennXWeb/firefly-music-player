@@ -34,13 +34,13 @@ It provides:
 7. Run `npm start`. Verify `https://accounts.yourdomain.com/health` returns `{"ok":true,"service":"ignifire-cloud"}`.
 8. In Ignifire, open **Settings → Account & sync**, then create or sign into an account through `https://accounts.ignifire.app`.
 
-The deployment needs a persistent writable directory for `STORAGE_ROOT`. Do not place it inside a directory replaced by every deployment. On managed Hostinger hosting, choose a persistent application-data directory available to the Node app; on a VPS, `/var/lib/firefly-cloud` is a sensible choice owned only by the service user.
+The deployment needs a persistent writable directory for `STORAGE_ROOT`. Do not place it inside a directory replaced by every deployment. On managed Hostinger hosting, use `/home/YOUR_HOSTINGER_USER/.ignifire/storage`. Production builds automatically redirect the legacy `./storage` value to `$HOME/.ignifire/storage`, but setting the absolute path explicitly is recommended. On a VPS, `/var/lib/ignifire-cloud` is a sensible choice owned only by the service user.
 
 ## Web player
 
 Deploy the matching `Ignifire-Web-<version>.zip` as the static website for `https://ignifire.app`. Deploy or redeploy this account service first, because the static web player depends on its authenticated `/v1/web/library` and `/v1/web/stream/:hash` endpoints.
 
-The web player intentionally exposes a smaller, read-only feature set: Home, Albums, Songs, Playlists, search, and playback. Importing, metadata editing, AI tools, Shelf Mode, advanced settings, and update-channel selection remain Windows-only. The download button always points at the latest stable GitHub release, never the beta channel.
+The web player intentionally exposes a smaller, read-only feature set: Home, Albums, Songs, Playlists, search, and playback. Importing, metadata editing, AI tools, Shelf Mode, advanced settings, and update-channel selection remain Windows-only. The download button points directly to the newest public installer published by the beta release workflow.
 
 ## Phone codes
 
