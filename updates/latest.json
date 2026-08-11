@@ -2,7 +2,7 @@
   "channel": "testing",
   "branch": "testing",
   "version": "0.1.55",
-  "publishedAt": "2026-08-11T21:28:06.832Z",
+  "publishedAt": "2026-08-11T21:32:25.0272890Z",
   "audience": "user",
   "highlights": [
     "Authorized Ignifire accounts can now opt into the Testing update channel.",
@@ -10,6 +10,6 @@
     "Development builds now publish automatically from the testing branch without affecting Beta or Stable."
   ],
   "notes": "Adds an account-authorized Testing channel and a separate testing-branch build pipeline.",
-  "downloadUrl": "",
-  "sha256": ""
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/testing-v0.1.55/Ignifire-0.1.55-Setup.exe",
+  "sha256": "2EE49557D31E7D7D27E6D6AD718AC00DCDCA905AB86EA1F17F18A3248777556D"
 }
