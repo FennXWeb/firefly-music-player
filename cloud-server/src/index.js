@@ -38,5 +38,5 @@ app.get('/v1/sync/objects/:hash',requireDesktopAuth,getObject);
 app.put('/v1/sync/snapshot',requireDesktopAuth,putSnapshot);
 app.get('/v1/sync/snapshot',requireDesktopAuth,getSnapshot);
 app.use((_req,res)=>res.status(404).json({error:'Not found.'}));
-app.use((error,_req,res,_next)=>{console.error(error);res.status(500).json({error:process.env.NODE_ENV==='production'?'The Ignifire account service could not complete that request.':error.message})});
+app.use((error,_req,res,_next)=>{console.error(error);if(error?.type==='entity.too.large'||Number(error?.status)===413)return res.status(413).json({error:'The cloud library snapshot is too large. Update Ignifire so artwork can be optimized before syncing.'});res.status(500).json({error:process.env.NODE_ENV==='production'?'The Ignifire account service could not complete that request.':error.message})});
 app.listen(port,()=>console.log(`Ignifire account service listening on ${port}`));

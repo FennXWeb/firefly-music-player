@@ -189,8 +189,9 @@ function webArtwork(value) {
   return /^(?:https:\/\/|data:image\/(?:png|jpe?g|webp|gif);base64,)/i.test(source) ? source : '';
 }
 
-function webTrack(track = {}) {
+function webTrack(track = {}, availableHashes = null) {
   const hash = String(track.cloudFile?.hash || '').toLowerCase();
+  const hasValidHash = /^[a-f0-9]{64}$/.test(hash);
   return {
     id: String(track.id || ''),
     title: String(track.title || 'Untitled track'),
@@ -205,8 +206,8 @@ function webTrack(track = {}) {
     lastPlayed: Number(track.lastPlayed) || null,
     added: Number(track.added) || 0,
     favorite: Boolean(track.favorite),
-    playable: /^[a-f0-9]{64}$/.test(hash),
-    cloudHash: /^[a-f0-9]{64}$/.test(hash) ? hash : ''
+    playable: hasValidHash && (!availableHashes || availableHashes.has(hash)),
+    cloudHash: hasValidHash ? hash : ''
   };
 }
 
@@ -231,7 +232,7 @@ function webPlaylist(playlist = {}) {
   };
 }
 
-function webLibraryState(state = {}) {
+function webLibraryState(state = {}, availableHashes = null) {
   const albums = Array.isArray(state.albums) ? state.albums.map(album => ({
     id: String(album.id || ''),
     title: String(album.title || 'Untitled album'),
@@ -240,7 +241,7 @@ function webLibraryState(state = {}) {
     genre: String(album.genre || ''),
     cover: String(album.cover || ''),
     customCover: webArtwork(album.customCover),
-    tracks: Array.isArray(album.tracks) ? album.tracks.filter(track => !track?.pending).map(webTrack) : []
+    tracks: Array.isArray(album.tracks) ? album.tracks.filter(track => !track?.pending).map(track => webTrack(track, availableHashes)) : []
   })).filter(album => album.tracks.length) : [];
   const artistProfiles = {};
   if (state.artistProfiles && typeof state.artistProfiles === 'object' && !Array.isArray(state.artistProfiles)) {
@@ -272,8 +273,24 @@ export async function getWebLibrary(req, res, next) {
     let library = null;
     if (rows[0] && await storedObjectAvailable(rows[0].storage_name)) {
       const data = await decryptFromFile(rows[0].storage_name);
-      library = webLibraryState(JSON.parse(data.toString('utf8')));
+      const state = JSON.parse(data.toString('utf8'));
+      const hashes = [...new Set((Array.isArray(state.albums) ? state.albums : []).flatMap(album => Array.isArray(album?.tracks) ? album.tracks : [])
+        .map(track => String(track?.cloudFile?.hash || '').toLowerCase())
+        .filter(hash => /^[a-f0-9]{64}$/.test(hash)))];
+      const availableHashes = new Set();
+      if (hashes.length) {
+        const { rows: objects } = await client.query(
+          'SELECT content_hash,storage_name FROM firefly_sync_objects WHERE user_id=$1 AND content_hash=ANY($2::text[])',
+          [req.fireflyUserId, hashes]
+        );
+        await Promise.all(objects.map(async object => {
+          if (await storedObjectAvailable(object.storage_name)) availableHashes.add(String(object.content_hash).toLowerCase());
+        }));
+      }
+      library = webLibraryState(state, availableHashes);
     }
+    const catalogTracks = library?.albums?.flatMap(album => album.tracks || []) || [];
+    const streamableTrackCount = catalogTracks.filter(track => track.playable).length;
     res.set('Cache-Control', 'private, no-store').json({
       user: {
         id: req.fireflyWebUser.id,
@@ -286,6 +303,9 @@ export async function getWebLibrary(req, res, next) {
       revision: Number(rows[0]?.revision || 0),
       syncedAt: rows[0]?.synced_at || null,
       deviceName: rows[0]?.device_name || '',
+      catalogTrackCount: catalogTracks.length,
+      streamableTrackCount,
+      missingTrackCount: Math.max(0, catalogTracks.length - streamableTrackCount),
       library
     });
   } catch (error) {

@@ -1,15 +1,15 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.49",
+  "version": "0.1.50",
   "publishedAt": "2026-08-10T00:40:10.0929015Z",
   "audience": "user",
   "highlights": [
-    "Cloud sync now repairs database records whose encrypted audio files were lost during a server redeploy.",
-    "Production cloud storage automatically moves outside Hostinger's replaceable application directory.",
-    "Desktop sync retries through the upload route when an existing-object check fails."
+    "Missing or unreadable tracks can now be repaired by choosing a replacement audio file without losing metadata, playlists, artwork, lyrics, or listening history.",
+    "Cloud snapshots compress full-resolution local artwork so large libraries can finish syncing instead of exceeding the server payload limit.",
+    "Ignifire for Web restores the complete catalog and clearly distinguishes streamable tracks from audio files that still need repair."
   ],
-  "notes": "Repairs cloud libraries left with stale database rows after Hostinger replaced local encrypted files during a redeploy, and prevents future deployments from storing cloud audio inside the replaceable app directory.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.49/Ignifire-0.1.49-Setup.exe",
-  "sha256": "426D2D8C7E14D60F8679089A1FD7BC4B591308E734F3FA9156D61652C3D9F8C8"
+  "notes": "Adds safe local-and-cloud track replacement, prevents oversized artwork from blocking cloud catalog snapshots, and restores partial web libraries with accurate streamability status.",
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.50/Ignifire-0.1.50-Setup.exe",
+  "sha256": ""
 }

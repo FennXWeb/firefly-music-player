@@ -97,6 +97,7 @@ function albumById(id) { return albums.find(a => a.id === id); }
 function isCloudTrack(track){return Boolean(track?.cloudFile?.hash)}
 function isCloudDownloaded(track){return isCloudTrack(track)&&Boolean(track?.path)}
 function cloudTrackBadge(track){return isCloudTrack(track)?`<span class="cloud-track-badges"><i class="cloud-badge" title="Stored in your cloud">CLOUD</i>${isCloudDownloaded(track)?'<i class="downloaded-badge" title="Downloaded on this PC">DOWNLOADED</i>':''}</span>`:''}
+function trackFileErrorBadge(track){return track?.fileError?`<i class="track-error-badge" title="${esc(track.fileError.message||'This audio file could not be read. Right-click to repair it.')}">FILE ERROR</i>`:''}
 function albumCloudState(album){const tracks=(album?.tracks||[]).filter(track=>!track.pending),cloudCount=tracks.filter(isCloudTrack).length;return{cloud:tracks.length>0&&cloudCount===tracks.length,partial:cloudCount>0&&cloudCount<tracks.length,cloudCount,total:tracks.length,downloaded:tracks.length>0&&tracks.every(isCloudDownloaded)}}
 function albumCloudBadge(album){const state=albumCloudState(album);return state.cloud?`<span class="album-cloud-badges"><i>CLOUD</i>${state.downloaded?'<i>DOWNLOADED</i>':''}</span>`:state.partial?`<span class="album-cloud-badges"><i title="${state.cloudCount} of ${state.total} tracks stored">${accountSyncState.status==='syncing'?'SYNCING':'PARTIAL CLOUD'}</i></span>`:''}
 function sameCloudFile(left,right){return String(left?.hash||'')===String(right?.hash||'')&&String(left?.name||'')===String(right?.name||'')&&Number(left?.size||0)===Number(right?.size||0)}
@@ -109,7 +110,7 @@ async function setCloudDownload(tracks,download=true){
   let eligible=(tracks||[]).filter(track=>isCloudTrack(track)&&(download?!isCloudDownloaded(track):isCloudDownloaded(track)));if(!download&&eligible.length){const hashes=new Set(eligible.map(track=>track.cloudFile.hash));eligible=allTracks().filter(track=>hashes.has(track.cloudFile?.hash)&&isCloudDownloaded(track))}if(!eligible.length){toast(download?'Already downloaded':'No cloud downloads to remove');return}
   try{
     const results=download?await window.firefly.downloadCloudTracks(eligible):await window.firefly.removeCloudDownloads(eligible),byId=new Map(results.map(result=>[result.id,result]));
-    eligible.forEach(track=>{const result=byId.get(track.id);if(!result)return;track.path=result.path||null;track.url=result.url||`ignifire-cloud://track/${track.cloudFile.hash}/${encodeURIComponent(track.cloudFile.name||'track.audio')}`;track.managedFile=Boolean(result.path)});
+    eligible.forEach(track=>{const result=byId.get(track.id);if(!result)return;track.path=result.path||null;track.url=result.url||`ignifire-cloud://track/${track.cloudFile.hash}/${encodeURIComponent(track.cloudFile.name||'track.audio')}`;track.managedFile=Boolean(result.path);if(!download)delete track.keepLocalCopy});
     saveLibrary();refreshLibraryView();toast(download?'Download complete':'Download removed',`${results.length} cloud track${results.length===1?'':'s'} updated.`);
   }catch(error){toast(download?'Could not download tracks':'Could not remove downloads',error.message)}
 }
@@ -761,7 +762,7 @@ function songTable(tracks,{draggable=false,playlistId=''}={}) {
   tracks=settings.showPendingTracks?tracks:tracks.filter(track=>!track.pending);
   return `<table class="song-table"><thead><tr><th>#</th><th>TITLE</th><th>ALBUM</th><th>PLAYS</th><th>TIME</th><th></th></tr></thead><tbody>${tracks.map((t,i)=>{
     const a=albumById(t.albumId)||{cover:'cover-8'},active=!t.pending&&currentTrack?.id===t.id;
-    return `<tr class="${t.pending?'pending-row':''} ${draggable?'playlist-draggable-track':''} ${active?'current-playing-track':''} ${active&&isPlaying?'is-playing':''}" data-track="${t.id}" ${draggable?`draggable="true" data-playlist-track="${t.id}" data-playlist-id="${playlistId}"`:''}><td class="track-index-cell">${draggable?`<span class="playlist-track-grip" title="Drag to reorder">⋮⋮</span>`:''}${t.pending?'—':`<span class="track-list-number">${i+1}</span><span class="playing-now-equalizer" role="img" aria-label="${active&&isPlaying?'Playing now':'Current track'}"><i></i><i></i><i></i><i></i></span>`}</td><td><div class="song-title"><div class="thumb ${a.cover}" ${a.customCover?`style="background-image:url('${a.customCover}');background-size:cover"`:''}></div><span><b>${esc(t.title)}</b><small>${esc(t.artist)}</small></span>${cloudTrackBadge(t)}${t.pending?'<i class="pending-badge">PENDING</i>':''}</div></td><td>${esc(t.album)}</td><td>${t.pending?'—':t.plays}</td><td>${t.pending?'—':t.duration}</td><td><button class="row-action" data-row-action="${t.id}">${icon('more')}</button></td></tr>`;
+    return `<tr class="${t.pending?'pending-row':''} ${t.fileError?'track-file-error':''} ${draggable?'playlist-draggable-track':''} ${active?'current-playing-track':''} ${active&&isPlaying?'is-playing':''}" data-track="${t.id}" ${draggable?`draggable="true" data-playlist-track="${t.id}" data-playlist-id="${playlistId}"`:''}><td class="track-index-cell">${draggable?`<span class="playlist-track-grip" title="Drag to reorder">⋮⋮</span>`:''}${t.pending?'—':`<span class="track-list-number">${i+1}</span><span class="playing-now-equalizer" role="img" aria-label="${active&&isPlaying?'Playing now':'Current track'}"><i></i><i></i><i></i><i></i></span>`}</td><td><div class="song-title"><div class="thumb ${a.cover}" ${a.customCover?`style="background-image:url('${a.customCover}');background-size:cover"`:''}></div><span><b>${esc(t.title)}</b><small>${esc(t.artist)}</small></span>${trackFileErrorBadge(t)}${cloudTrackBadge(t)}${t.pending?'<i class="pending-badge">PENDING</i>':''}</div></td><td>${esc(t.album)}</td><td>${t.pending?'—':t.plays}</td><td>${t.pending?'—':t.duration}</td><td><button class="row-action" data-row-action="${t.id}">${icon('more')}</button></td></tr>`;
   }).join('')}</tbody></table>`;
 }
 function updatePlayingTrackRows(){
@@ -991,6 +992,34 @@ function addTrackToPlaylist(track) {
   $$('[data-add-to-playlist]',modalLayer).forEach(btn=>btn.onclick=()=>{const p=findPlaylistById(btn.dataset.addToPlaylist);p.trackIds=p.trackIds||[];if(!p.trackIds.includes(track.id))p.trackIds.push(track.id);saveLibrary();closeModal();toast('Added to playlist',p.title)});
 }
 
+async function repairTrackFile(track) {
+  if(!track||track.pending)return;
+  if(!window.firefly?.repairTrackFile){toast('Track repair requires the Windows app');return}
+  const hadCloudCopy=isCloudTrack(track),wasCurrent=currentTrack?.id===track.id,wasPlaying=wasCurrent&&isPlaying&&!audio.paused,position=wasCurrent&&Number.isFinite(audio.currentTime)?audio.currentTime:0;
+  try{
+    const replacement=await window.firefly.repairTrackFile({id:track.id,title:track.title,cloudFile:track.cloudFile||null});
+    if(!replacement||replacement.canceled)return;
+    track.path=replacement.path;track.url=replacement.url;track.managedFile=true;track.keepLocalCopy=true;track.contentHash=replacement.contentHash;
+    delete track.fileError;delete track.cloudFileUnavailable;
+    if(wasCurrent){
+      audio.pause();audio.src=track.url;audio.load();
+      if(position>0)audio.addEventListener('loadedmetadata',()=>{try{audio.currentTime=Math.min(position,Math.max(0,(audio.duration||position)-.1))}catch{/* A repaired stream may not be seekable yet. */}},{once:true});
+      if(wasPlaying)tryPlayCurrentAudio();
+    }
+    saveLibrary();refreshLibraryView();
+    const shouldRepairCloud=hadCloudCopy||(accountState.signedIn&&settings.cloudSyncEnabled);
+    if(!shouldRepairCloud){toast('Track file repaired',`${track.title} now uses ${replacement.fileName}.`);return}
+    accountSyncState={status:'syncing',phase:'tracks'};updateAccountSyncStatusView();
+    try{
+      const cloudResult=await window.firefly.syncRepairedTrack(currentLibraryState());
+      if(cloudResult?.queued){toast('Local file repaired','The cloud replacement is queued behind the current sync.');return}
+      applyCloudSyncResult(cloudResult);accountSyncState={status:'synced',...cloudResult};
+      accountState.storageUsed=Number(cloudResult?.storageUsed)||accountState.storageUsed;accountState.storageLimit=Number(cloudResult?.storageLimit)||accountState.storageLimit;
+      updateAccountSyncStatusView();toast('Track repaired everywhere',`${track.title} keeps its metadata and now uses the replacement file locally and in the cloud.`);
+    }catch(error){accountSyncState={status:'error',error:error.message};updateAccountSyncStatusView();toast('Local file repaired',`Cloud repair is pending: ${error.message}`)}
+  }catch(error){toast('Could not repair track',error.message||'The replacement audio file could not be read.')}
+}
+
 function trackContext(track,x,y) {
   showContextMenu([
     {label:'Play',icon:'play',action:()=>playTrack(track)},
@@ -998,6 +1027,7 @@ function trackContext(track,x,y) {
     {label:'Add to playlist',icon:'playlist',action:()=>addTrackToPlaylist(track)},
     {label:track.favorite?'Remove from favorites':'Add to favorites',icon:'spark',action:()=>setTrackFavorite(track)},
     {label:'Edit track',icon:'settings',action:()=>showTrackMenu(track)},
+    {label:track.fileError?'Resolve file error…':'Replace audio file…',icon:'upload',action:()=>repairTrackFile(track)},
     ...(isCloudTrack(track)?[{label:isCloudDownloaded(track)?'Remove cloud download':'Download cloud track',icon:isCloudDownloaded(track)?'close':'download',action:()=>setCloudDownload([track],!isCloudDownloaded(track))}]:[]),
     {separator:true},
     {label:'Remove from library',icon:'close',danger:true,action:()=>confirmRemove('Remove track?',`“${track.title}” will be removed from Ignifire. The source file stays untouched.`,()=>{const album=albumById(track.albumId);if(album)album.tracks=album.tracks.filter(t=>t.id!==track.id);customPlaylists.forEach(p=>removePlaylistTrackReferences(p,new Set([track.id])));albums=albums.filter(a=>a.tracks.length||a.id!=='loose-files');saveLibrary();render();toast('Track removed')})}
@@ -1012,6 +1042,7 @@ function nowPlayingContext(x,y) {
     ...(album?[{label:'Open album',icon:'albums',action:()=>openAlbumDetail(album.id)}]:[]),
     {label:'Open artist',icon:'artist',action:()=>openArtistDetail(currentTrack.artist)},
     {label:'Edit track',icon:'settings',action:()=>showTrackMenu(currentTrack)},
+    {label:currentTrack.fileError?'Resolve file error…':'Replace audio file…',icon:'upload',action:()=>repairTrackFile(currentTrack)},
     {separator:true},
     {label:'View queue',icon:'list',action:openQueue}
   ],x,y);
@@ -1040,7 +1071,7 @@ async function configureDiscordPresence(notify=false){
 }
 function discordSettingsMarkup(){return `<div class="settings-section discord-settings-section"><div class="settings-section-heading"><span><small class="discord-kicker">DISCORD</small><h3>Rich Presence</h3></span></div>${settingToggle('discordRichPresence','Share listening activity','Show the current track, artist, album, and playback state on your Discord profile')}${settingToggle('discordShowTrack','Show track title','Share the title of the song that is playing')}${settingToggle('discordShowAlbum','Show album name','Include the album alongside the artist')}${settingToggle('discordShowPaused','Show paused status','Keep Rich Presence visible while playback is paused')}${settingSelect('discordTimeDisplay','Playback timer','Choose whether Discord shows elapsed or remaining time',[['elapsed','Elapsed time'],['remaining','Time remaining'],['off','Hidden']])}${settingToggle('discordShareArtwork','Share online album artwork','Use HTTPS cover artwork when Discord supports the source')}${settingToggle('discordShowButton','Show Ignifire button','Add a button linking friends to the Ignifire project')}<div class="setting-row discord-status-row"><div id="discordPresenceStatus" class="discord-presence-status"><i></i><span><b>Status</b><small>Checking the connection…</small></span></div><button class="ghost" id="reconnectDiscord">Reconnect</button></div></div>`}
 function accountIdentity(){const user=accountState.user||{};return user.email&&!/@phone\.(?:firefly|ignifire)\.invalid$/i.test(String(user.email))?user.email:user.phoneNumber||user.name||'Ignifire listener'}
-function accountSyncDetail(){return accountSyncState.status==='syncing'?(accountSyncState.phase==='snapshot'?'Finishing encrypted library backup…':accountSyncState.totalTracks?`Uploading tracks · ${Math.min(Number(accountSyncState.uploadedTracks)||0,Number(accountSyncState.totalTracks))} of ${accountSyncState.totalTracks}`:'Preparing cloud backup…'):accountSyncState.status==='error'?String(accountSyncState.error||'Sync could not finish'):accountSyncState.status==='synced'?`Protected backup updated${accountSyncState.syncedAt?` · ${new Date(accountSyncState.syncedAt).toLocaleString()}`:''}`:settings.cloudSyncEnabled?'Changes sync automatically in the background':'Cloud sync is disabled'}
+function accountSyncDetail(){return accountSyncState.status==='syncing'?(accountSyncState.phase==='snapshot'?'Finishing encrypted library backup…':accountSyncState.totalTracks?`Uploading tracks · ${Math.min(Number(accountSyncState.uploadedTracks)||0,Number(accountSyncState.totalTracks))} of ${accountSyncState.totalTracks}`:'Preparing cloud backup…'):accountSyncState.status==='error'?String(accountSyncState.error||'Sync could not finish'):accountSyncState.status==='synced'&&accountSyncState.uploadFailures?.length?`Library synced · ${accountSyncState.uploadFailures.length} audio file${accountSyncState.uploadFailures.length===1?' needs':'s need'} repair`:accountSyncState.status==='synced'?`Protected backup updated${accountSyncState.syncedAt?` · ${new Date(accountSyncState.syncedAt).toLocaleString()}`:''}`:settings.cloudSyncEnabled?'Changes sync automatically in the background':'Cloud sync is disabled'}
 function updateAccountSyncStatusView(){const status=$('#accountSyncStatusText');if(status)status.textContent=accountSyncDetail()}
 function accountSettingsMarkup(){
   const used=Number(accountState.storageUsed)||0,limit=Number(accountState.storageLimit)||ACCOUNT_STORAGE_LIMIT_BYTES,percent=Math.min(100,used/Math.max(1,limit)*100),identity=accountIdentity();
@@ -1059,7 +1090,7 @@ async function claimAccountConnection(){
 }
 async function syncAccountNow(){
   accountSyncState={status:'syncing'};renderSettings();
-  try{const result=await window.firefly.syncAccountNow(currentLibraryState());applyCloudSyncResult(result);accountSyncState={status:'synced',...result};accountState.storageUsed=Number(result.storageUsed)||accountState.storageUsed;accountState.storageLimit=Number(result.storageLimit)||accountState.storageLimit;renderSettings();toast('Cloud backup updated',`${formatStorage(accountState.storageUsed)} of ${formatStorage(accountState.storageLimit)} used.`)}
+  try{const result=await window.firefly.syncAccountNow(currentLibraryState());applyCloudSyncResult(result);accountSyncState={status:'synced',...result};accountState.storageUsed=Number(result.storageUsed)||accountState.storageUsed;accountState.storageLimit=Number(result.storageLimit)||accountState.storageLimit;renderSettings();toast(result.uploadFailures?.length?'Cloud library updated with warnings':'Cloud backup updated',result.uploadFailures?.length?`${result.uploadFailures.length} audio file${result.uploadFailures.length===1?' needs':'s need'} to be repaired; the rest of your library is available.`:`${formatStorage(accountState.storageUsed)} of ${formatStorage(accountState.storageLimit)} used.`)}
   catch(error){accountSyncState={status:'error',error:error.message};renderSettings();toast('Cloud sync failed',error.message)}
 }
 async function restoreAccountCloud(){
@@ -1597,6 +1628,15 @@ function commitPlayCount(track){
   if(!track||track.pending||pendingPlayCountTrackId!==track.id)return false;
   pendingPlayCountTrackId=null;track.plays=(Number(track.plays)||0)+1;track.lastPlayed=Date.now();playHistory.push({trackId:track.id,playedAt:track.lastPlayed});if(playHistory.length>2500)playHistory=playHistory.slice(-2500);saveLibrary();refreshVisiblePlayStats(track);return true;
 }
+function markTrackFileError(track,error){
+  if(!track||track.pending||['AbortError','NotAllowedError'].includes(String(error?.name||'')))return false;
+  const mediaError=audio.error,code=Number(mediaError?.code)||0;
+  const message=String(mediaError?.message||error?.message||({2:'The audio file could not be reached.',3:'The audio file could not be decoded.',4:'This audio file could not be played.'}[code])||'The audio file could not be read.').slice(0,220);
+  if(track.fileError?.source===track.url&&track.fileError?.message===message)return false;
+  track.fileError={message,code,source:track.url||'',detectedAt:Date.now()};saveLibrary();
+  toast('Track file needs attention',`Right-click “${track.title}” and choose Resolve file error.`);return true;
+}
+function tryPlayCurrentAudio(){return audio.play().catch(error=>{setPlaying(false);markTrackFileError(currentTrack,error)})}
 function playTrackQueue(tracks,shuffle=shuffleEnabled,context=null,startTrackId=''){
   const nextQueue=tracks.filter(track=>!track.pending);if(!nextQueue.length){toast('No playable tracks');return}
   playbackContext=context?.type==='playlist'&&context.id?{type:'playlist',id:context.id}:null;
@@ -1622,7 +1662,7 @@ function playTrack(track,preserveQueue=false){
   updateFullscreenArtistBackdrop(track);updatePlayerPlaybackContext();updatePlayingTrackRows();
   renderQueue();
   syncNativePlaybackState();
-  if(track.url){audio.volume=settings.muted?0:settings.volume/100;audio.src=track.url;audio.playbackRate=Math.max(.5,Math.min(2,Number(settings.playbackRate)||1));audio.play().then(()=>setPlaying(true)).catch(()=>setPlaying(false));}else{simProgress=0;setRange($('#progress'),0);setPlaying(true);commitPlayCount(track)}
+  if(track.url){audio.volume=settings.muted?0:settings.volume/100;audio.src=track.url;audio.playbackRate=Math.max(.5,Math.min(2,Number(settings.playbackRate)||1));tryPlayCurrentAudio();}else if(track.fileError){setPlaying(false);toast('Track file needs attention',`Right-click “${track.title}” and choose Resolve file error.`)}else{simProgress=0;setRange($('#progress'),0);setPlaying(true);commitPlayCount(track)}
   if($('#fullscreenPlayer').classList.contains('open')){if(fullscreenMode==='video')prepareTrackVideo(track);if(fullscreenMode==='lyrics')renderLyricsStage(track)}
 }
 function setPlaying(value){isPlaying=value;const name=value?'pause':'play';$('#playBtn').innerHTML=icon(name);$('#fullPlay').innerHTML=icon(name);renderQueue();updatePlayingTrackRows();syncNativePlaybackState();clearInterval(simTimer);if(value&&!currentTrack.url){simTimer=setInterval(()=>{simProgress=(simProgress+.22)%100;setRange($('#progress'),simProgress);$('#elapsed').textContent=formatTime(simProgress*2.72);if(Date.now()-lastDiscordProgressSync>15000){lastDiscordProgressSync=Date.now();syncNativePlaybackState()}},1000)}}
@@ -1630,14 +1670,14 @@ function startShuffledLibrary(){
   const library=allTracks().filter(track=>!track.pending);if(!library.length){toast('Nothing to play','Import music first.');return false}
   playbackContext=null;playbackOriginalQueue=[...library];playbackQueue=shuffledTracks(library);playbackQueueExplicit=true;setShuffleEnabled(true,{persist:true,reorder:false});playTrack(playbackQueue[0],true);return true
 }
-function togglePlay(){if(isPlaying){if(currentTrack?.url)audio.pause();else setPlaying(false);return}if(!effectivePlaybackQueue().length){startShuffledLibrary();return}if(!currentTrack){playTrack(effectivePlaybackQueue()[0],true);return}if(currentTrack.url)audio.play().catch(()=>setPlaying(false));else setPlaying(true)}
+function togglePlay(){if(isPlaying){if(currentTrack?.url)audio.pause();else setPlaying(false);return}if(!effectivePlaybackQueue().length){startShuffledLibrary();return}if(!currentTrack){playTrack(effectivePlaybackQueue()[0],true);return}if(currentTrack.url)tryPlayCurrentAudio();else if(currentTrack.fileError)playTrack(currentTrack,true);else setPlaying(true)}
 function formatTime(s){s=Math.floor(s);return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`}
 function nextTrack(dir=1,{ended=false}={}){const tracks=effectivePlaybackQueue();if(!tracks.length){toast(playbackQueueExplicit?'Queue finished':'Nothing to play',playbackQueueExplicit?'Add songs or start another collection.':'Import music first.');return}const idx=currentTrack?tracks.findIndex(t=>t.id===currentTrack.id):-1;if(ended&&settings.stopAfterCurrent){settings.stopAfterCurrent=false;setPlaying(false);saveLibrary();toast('Stopped after current track');return}if(ended&&!settings.autoplayNext){setPlaying(false);renderQueue();return}if(ended&&repeatMode==='one'){playTrack(currentTrack,true);return}if(ended&&idx===tracks.length-1&&repeatMode==='off'){setPlaying(false);renderQueue();return}const next=idx<0?(dir>=0?0:tracks.length-1):(idx+dir+tracks.length)%tracks.length;playTrack(tracks[next],playbackQueueExplicit)}
 function handleNativeMediaCommand(command){
   if(command==='toggle'){togglePlay();return}
   if(command==='next'){nextTrack(1);return}
   if(command==='previous'){nextTrack(-1);return}
-  if(command==='play'){if(!effectivePlaybackQueue().length){startShuffledLibrary();return}if(!currentTrack){playTrack(effectivePlaybackQueue()[0],true);return}if(currentTrack.url){if(audio.paused)audio.play().catch(()=>setPlaying(false))}else setPlaying(true);return}
+  if(command==='play'){if(!effectivePlaybackQueue().length){startShuffledLibrary();return}if(!currentTrack){playTrack(effectivePlaybackQueue()[0],true);return}if(currentTrack.url){if(audio.paused)tryPlayCurrentAudio()}else if(currentTrack.fileError)playTrack(currentTrack,true);else setPlaying(true);return}
   if(command==='pause'){if(currentTrack?.url)audio.pause();else if(currentTrack)setPlaying(false);return}
   if(command==='stop'){if(currentTrack?.url){audio.pause();try{audio.currentTime=0}catch{/* A not-yet-loaded cloud track may not be seekable. */}}else simProgress=0;setRange($('#progress'),0);$('#elapsed').textContent='0:00';setPlaying(false)}
 }
@@ -1895,7 +1935,7 @@ $('#folderInput').onchange=e=>{if(e.target.files.length){const entries=normalize
 $('#screenshotInput').onchange=e=>{if(e.target.files[0])screenshotWorkflow(e.target.files[0]);e.target.value=''};
 $('#playBtn').onclick=togglePlay;$('#fullPlay').onclick=togglePlay;$('#prevBtn').onclick=()=>nextTrack(-1);$('#nextBtn').onclick=()=>nextTrack(1);$('#fullPrev').onclick=()=>nextTrack(-1);$('#fullNext').onclick=()=>nextTrack(1);$('#fullscreenBtn').onclick=openFullscreen;$('#closeFull').onclick=closeFullscreen;
 $('#queueButton').onclick=()=>$('#queuePanel').classList.contains('open')?closeQueue():openQueue();$('#closeQueue').onclick=closeQueue;$('#queueBackdrop').onclick=closeQueue;$('#clearQueue').onclick=clearPlaybackQueue;
-audio.onplay=()=>{audio.volume=settings.muted?0:settings.volume/100;setPlaying(true);commitPlayCount(currentTrack)};audio.onpause=()=>setPlaying(false);audio.onended=()=>nextTrack(1,{ended:true});audio.ontimeupdate=()=>{if(!audio.duration)return;const p=audio.currentTime/audio.duration*100;setRange($('#progress'),p);$('#elapsed').textContent=formatTime(audio.currentTime);$('#duration').textContent=formatTime(audio.duration);updatePlaybackEnvelope();updateLyricsPosition(audio.currentTime);if(Date.now()-lastDiscordProgressSync>15000){lastDiscordProgressSync=Date.now();syncNativePlaybackState()}};
+audio.onplay=()=>{audio.volume=settings.muted?0:settings.volume/100;if(currentTrack?.fileError){delete currentTrack.fileError;saveLibrary()}setPlaying(true);commitPlayCount(currentTrack)};audio.onpause=()=>setPlaying(false);audio.onended=()=>nextTrack(1,{ended:true});audio.onerror=()=>{setPlaying(false);markTrackFileError(currentTrack,audio.error)};audio.ontimeupdate=()=>{if(!audio.duration)return;const p=audio.currentTime/audio.duration*100;setRange($('#progress'),p);$('#elapsed').textContent=formatTime(audio.currentTime);$('#duration').textContent=formatTime(audio.duration);updatePlaybackEnvelope();updateLyricsPosition(audio.currentTime);if(Date.now()-lastDiscordProgressSync>15000){lastDiscordProgressSync=Date.now();syncNativePlaybackState()}};
 $('#progress').oninput=e=>{setRange(e.target,e.target.value);if(currentTrack?.url&&audio.duration)audio.currentTime=audio.duration*e.target.value/100;else simProgress=Number(e.target.value);syncNativePlaybackState()};
 $('#volume').oninput=e=>setVolume(e.target.value);$('#volume').onchange=()=>{clearTimeout(volumePersistenceTimer);persistCurrentState()};$('#volumeMute').onclick=toggleMute;
 $('#favoriteTrack').onclick=()=>currentTrack?setTrackFavorite(currentTrack):toast('Nothing is playing');

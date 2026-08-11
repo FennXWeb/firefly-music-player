@@ -52,6 +52,7 @@ const liveEntryCache = new Map();
 let cloudSyncTimer = null;
 let cloudSyncInFlight = false;
 let pendingCloudState = null;
+let pendingCloudOptions = null;
 let cloudQuotaBlocked = false;
 let mediaOverlayWindow = null;
 let mediaOverlayTimer = null;
@@ -377,6 +378,29 @@ async function ensureManagedAudioCopy(sourcePath, knownHash = '') {
   catch (error) { await fs.rm(temporary, { force: true });try { if (!(await fs.stat(destination)).isFile()) throw error; } catch { throw error; } }
   return { path: destination, hash };
 }
+async function chooseTrackReplacement(track = {}) {
+  const result = await dialog.showOpenDialog({
+    title: `Repair ${String(track.title || 'track')}`,
+    buttonLabel: 'Use this audio file',
+    properties: ['openFile'],
+    filters: [{ name: 'Music', extensions: [...audioExtensions].map(extension => extension.slice(1)) }]
+  });
+  if (result.canceled || !result.filePaths[0]) return { canceled: true };
+  const sourcePath = result.filePaths[0], extension = path.extname(sourcePath).toLowerCase();
+  if (!audioExtensions.has(extension)) throw new Error('Choose a supported audio file.');
+  const stats = await fs.stat(sourcePath);
+  if (!stats.isFile() || stats.size < 1) throw new Error('The selected audio file is empty or unavailable.');
+  const managed = await ensureManagedAudioCopy(sourcePath);
+  return {
+    canceled: false,
+    path: managed.path,
+    url: pathToFileURL(managed.path).href,
+    managedFile: true,
+    contentHash: managed.hash,
+    fileName: path.basename(sourcePath),
+    size: stats.size
+  };
+}
 function cloudTrackUrl(cloudFile = {}) {
   const hash = String(cloudFile.hash || '').toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(hash)) return '';
@@ -393,13 +417,18 @@ async function migrateManagedState(state) {
       try {
         const managed = await ensureManagedAudioCopy(filePath, track.cloudFile?.hash || '');
         track.path = managed.path;track.url = pathToFileURL(managed.path).href;track.managedFile = true;changed = true;
-      } catch { if (track.cloudFile?.hash) { track.path = null;track.url = cloudTrackUrl(track.cloudFile);changed = true; } }
+      } catch {
+        track.path = null;track.managedFile = false;track.url = track.cloudFile?.hash ? cloudTrackUrl(track.cloudFile) : '';
+        if (!track.cloudFile?.hash) track.fileError = { message: 'The local audio file is missing. Choose a replacement file to repair this track.', code: 0, source: filePath, detectedAt: Date.now() };
+        changed = true;
+      }
     } else if (filePath) {
       try {
         if (!(await fs.stat(filePath)).isFile()) throw new Error('Managed track is unavailable.');
         track.managedFile = true;const localUrl = pathToFileURL(filePath).href;if (track.url !== localUrl) { track.url = localUrl;changed = true; }
       } catch {
         track.path = null;track.managedFile = false;track.url = track.cloudFile?.hash ? cloudTrackUrl(track.cloudFile) : '';changed = true;
+        if (!track.cloudFile?.hash) track.fileError = { message: 'The local audio file is missing. Choose a replacement file to repair this track.', code: 0, source: filePath, detectedAt: Date.now() };
       }
     } else if (track.cloudFile?.hash) {
       const streamUrl = cloudTrackUrl(track.cloudFile);if (track.url !== streamUrl) { track.url = streamUrl;changed = true; }
@@ -456,47 +485,53 @@ async function uploadCloudObject(filePath, endpoint, token) {
   }
   return { hash, name, size: stats.size };
 }
-async function embedPortableFiles(value, key = '') {
-  if (Array.isArray(value)) return Promise.all(value.map(item => embedPortableFiles(item, key)));
-  if (value && typeof value === 'object') {for (const [childKey, child] of Object.entries(value)) value[childKey] = await embedPortableFiles(child, childKey);return value}
+async function embedPortableFiles(value, key = '', cache = new Map()) {
+  if (Array.isArray(value)) return Promise.all(value.map(item => embedPortableFiles(item, key, cache)));
+  if (value && typeof value === 'object') {for (const [childKey, child] of Object.entries(value)) value[childKey] = await embedPortableFiles(child, childKey, cache);return value}
   if (typeof value !== 'string') return value;
   if (key === 'path' || /(?:sourcePath|backgroundPath|audioPath)$/i.test(key)) return null;
   if (!value.startsWith('file:')) return value;
+  if (cache.has(value)) return cache.get(value);
   try {
-    const filePath=fileURLToPath(value),stats=await fs.stat(filePath);if(!stats.isFile()||stats.size>50*1024*1024)return null;
-    const extension=path.extname(filePath).toLowerCase(),mime=({'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.gif':'image/gif','.bmp':'image/bmp','.mp4':'video/mp4','.webm':'video/webm'}[extension]||'application/octet-stream');
-    return `data:${mime};base64,${(await fs.readFile(filePath)).toString('base64')}`;
+    const filePath=fileURLToPath(value),stats=await fs.stat(filePath);if(!stats.isFile()||stats.size>64*1024*1024)return null;
+    const extension=path.extname(filePath).toLowerCase();if(!['.png','.jpg','.jpeg','.webp','.gif','.bmp','.svg'].includes(extension))return null;
+    let image=nativeImage.createFromPath(filePath);if(image.isEmpty())return null;
+    const size=image.getSize(),largest=Math.max(size.width,size.height);
+    if(largest>1000){const scale=1000/largest;image=image.resize({width:Math.max(1,Math.round(size.width*scale)),height:Math.max(1,Math.round(size.height*scale)),quality:'good'})}
+    const compressed=image.toJPEG(76),result=compressed.length?`data:image/jpeg;base64,${compressed.toString('base64')}`:null;
+    cache.set(value,result);return result;
   } catch { return null; }
 }
 async function portableCloudState(state, endpoint, token, onProgress) {
   const portable = JSON.parse(JSON.stringify(state || {}));
+  const uploadFailures = [];
   portable.liveFolders = [];
   const sourceTracks = new Map((state?.albums || []).flatMap(album => (album.tracks || []).map(track => [track.id, track])));
   const portableTracks=(portable.albums||[]).flatMap(album=>(album.tracks||[]).filter(track=>!track.pending));let completed=0;
   for (const album of portable.albums || []) for (const track of album.tracks || []) {
     if(track.pending)continue;
     const original = sourceTracks.get(track.id), filePath = String(original?.path || '');
-    track.path = null;track.url = null;delete track.liveFolderId;delete track.cloudSourceId;
+    track.path = null;track.url = null;delete track.liveFolderId;delete track.cloudSourceId;delete track.keepLocalCopy;delete track.fileError;
     if (!filePath) { if (original?.cloudFile?.hash) track.cloudFile = original.cloudFile;completed++;onProgress?.({id:track.id,cloudFile:track.cloudFile,completed,total:portableTracks.length});continue; }
-    try { track.cloudFile = await uploadCloudObject(filePath, endpoint, token); }
+    try { track.cloudFile = await uploadCloudObject(filePath, endpoint, token);delete track.cloudFileUnavailable; }
     catch (error) {
       track.cloudFileUnavailable = true;
       const title = String(track.title || path.basename(filePath) || 'track');
-      const uploadError = new Error(`Could not upload "${title}". ${error?.message || 'The cloud service rejected the audio file.'}`);
-      uploadError.status = error?.status;
-      throw uploadError;
+      uploadFailures.push({ id: track.id, title, error: error?.message || 'The cloud service rejected the audio file.', status: error?.status || 0 });
+      if (original?.cloudFile?.hash) track.cloudFile = original.cloudFile;
+      else delete track.cloudFile;
     }
     completed++;onProgress?.({id:track.id,cloudFile:track.cloudFile,completed,total:portableTracks.length});
   }
   await embedPortableFiles(portable);
   portable.cloudSnapshot = { createdAt: new Date().toISOString(), appVersion: app.getVersion() };
-  return portable;
+  return { state: portable, uploadFailures };
 }
-async function uploadCloudSnapshot(state, { manual = false } = {}) {
-  if (cloudSyncInFlight) { pendingCloudState = state;return { queued: true }; }
+async function uploadCloudSnapshot(state, { manual = false, force = false, retainLocalFiles = false } = {}) {
+  if (cloudSyncInFlight) { pendingCloudState = state;pendingCloudOptions = { manual, force, retainLocalFiles };return { queued: true }; }
   const endpoint = ignifireAccountEndpoint, enabled = Boolean(state?.settings?.cloudSyncEnabled);
   const { token } = await accountCredentials();
-  if (!enabled || !endpoint || !token) return { skipped: true };
+  if ((!enabled && !force) || !endpoint || !token) return { skipped: true };
   if (cloudQuotaBlocked && !manual) return { skipped: true, quotaBlocked: true };
   if (manual) cloudQuotaBlocked = false;
   cloudSyncInFlight = true;
@@ -504,7 +539,7 @@ async function uploadCloudSnapshot(state, { manual = false } = {}) {
     const progressFiles=[];let progressCompleted=0,progressTotal=0,lastProgressSent=0;
     const sendProgress=(force=false)=>{const now=Date.now();if(!force&&progressFiles.length<4&&now-lastProgressSent<900)return;primaryWindow?.webContents?.send('account:sync-status',{status:'syncing',phase:'tracks',uploadedTracks:progressCompleted,totalTracks:progressTotal,trackFiles:progressFiles.splice(0)});lastProgressSent=now};
     primaryWindow?.webContents?.send('account:sync-status',{status:'syncing',phase:'tracks',uploadedTracks:0,totalTracks:(state?.albums||[]).flatMap(album=>album.tracks||[]).filter(track=>!track.pending).length,trackFiles:[]});
-    const portable = await portableCloudState(state, endpoint, token,progress=>{progressCompleted=progress.completed;progressTotal=progress.total;if(progress.cloudFile?.hash)progressFiles.push({id:progress.id,cloudFile:progress.cloudFile});sendProgress()});
+    const prepared = await portableCloudState(state, endpoint, token,progress=>{progressCompleted=progress.completed;progressTotal=progress.total;if(progress.cloudFile?.hash)progressFiles.push({id:progress.id,cloudFile:progress.cloudFile});sendProgress()}),portable=prepared.state;
     sendProgress(true);
     primaryWindow?.webContents?.send('account:sync-status',{status:'syncing',phase:'snapshot',uploadedTracks:progressCompleted,totalTracks:progressTotal,trackFiles:[]});
     const response = await accountRequest('/v1/sync/snapshot', { method: 'PUT', endpoint, token, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ state: portable, deviceName: process.env.COMPUTERNAME || 'Windows PC' }) });
@@ -512,15 +547,17 @@ async function uploadCloudSnapshot(state, { manual = false } = {}) {
     const cloudTracks = new Map((portable.albums || []).flatMap(album => (album.tracks || []).filter(track => track.cloudFile?.hash).map(track => [track.id, track.cloudFile])));
     const removedLocalTrackIds = [];
     for (const album of pendingCloudState?.albums || []) for (const track of album.tracks || []) if (cloudTracks.has(track.id)) track.cloudFile = cloudTracks.get(track.id);
-    if (!state?.settings?.autoDownloadCloudLibrary) {
+    if (!retainLocalFiles && !state?.settings?.autoDownloadCloudLibrary) {
       for (const album of state?.albums || []) for (const track of album.tracks || []) {
-        if (!cloudTracks.has(track.id) || !track.path || !isManagedAudioPath(track.path)) continue;
+        if (!cloudTracks.has(track.id) || !track.path || track.keepLocalCopy || !isManagedAudioPath(track.path)) continue;
         await fs.rm(track.path, { force: true }).catch(() => {});removedLocalTrackIds.push(track.id);
         const pendingTrack=(pendingCloudState?.albums||[]).flatMap(album=>album.tracks||[]).find(item=>item.id===track.id);if(pendingTrack){pendingTrack.path=null;pendingTrack.url=cloudTrackUrl(cloudTracks.get(track.id));pendingTrack.managedFile=false}
       }
     }
     result.trackFiles = [...cloudTracks].map(([id, cloudFile]) => ({ id, cloudFile }));
     result.removedLocalTrackIds = removedLocalTrackIds;
+    result.uploadFailures = prepared.uploadFailures;
+    result.partial = prepared.uploadFailures.length > 0;
     primaryWindow?.webContents?.send('account:sync-status', { status: 'synced', ...result });
     return result;
   } catch (error) {
@@ -532,11 +569,11 @@ async function uploadCloudSnapshot(state, { manual = false } = {}) {
     return { error: error.message };
   } finally {
     cloudSyncInFlight = false;
-    if (pendingCloudState) { const next = pendingCloudState;pendingCloudState = null;scheduleCloudBackup(next, 500); }
+    if (pendingCloudState) { const next = pendingCloudState,options = pendingCloudOptions || {};pendingCloudState = null;pendingCloudOptions = null;scheduleCloudBackup(next, 500, options); }
   }
 }
-function scheduleCloudBackup(state, delay = 3500) {
-  clearTimeout(cloudSyncTimer);cloudSyncTimer = setTimeout(() => uploadCloudSnapshot(state), delay);cloudSyncTimer.unref?.();
+function scheduleCloudBackup(state, delay = 3500, options = {}) {
+  clearTimeout(cloudSyncTimer);cloudSyncTimer=setTimeout(()=>uploadCloudSnapshot(state,options),delay);cloudSyncTimer.unref?.();
 }
 async function downloadCloudSnapshot() {
   const stored = await accountCredentials(), base = ignifireAccountEndpoint;
@@ -1269,9 +1306,15 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('account:sign-out', async () => {try{await accountRequest('/v1/desktop/session',{method:'DELETE'})}catch{/* Always remove the local credential, even while offline. */}await updateAccountCredentials({ token: '' });return true});
   ipcMain.handle('account:sync-now', async (_event, state) => uploadCloudSnapshot(state, { manual: true }));
+  ipcMain.handle('account:repair-track-sync', async (_event, state) => {
+    const { token } = await accountCredentials();
+    if (!token) throw new Error('Sign in to update this track in your cloud library.');
+    return uploadCloudSnapshot(state, { manual: true, force: true, retainLocalFiles: true });
+  });
   ipcMain.handle('account:restore', async () => downloadCloudSnapshot());
   ipcMain.handle('account:download-tracks', async (_event, tracks) => downloadCloudTracks(tracks));
   ipcMain.handle('account:remove-downloads', async (_event, tracks) => removeCloudDownloads(tracks));
+  ipcMain.handle('library:repair-track', async (_event, track) => chooseTrackReplacement(track));
   ipcMain.handle('library:choose-files', async () => {
     const result = await dialog.showOpenDialog({
       title: 'Import music',
