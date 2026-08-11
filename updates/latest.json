@@ -1,15 +1,15 @@
 {
   "channel": "testing",
   "branch": "testing",
-  "version": "0.1.54",
-  "publishedAt": "2026-08-11T14:41:31.6234524Z",
+  "version": "0.1.55",
+  "publishedAt": "2026-08-11T21:28:06.832Z",
   "audience": "user",
   "highlights": [
-    "Playlist-themed playback bars now extend cleanly to the right edge of the Windows app.",
-    "Optional volume normalization keeps quieter and louder recordings at a more consistent listening level.",
-    "ReplayGain metadata is honored when available, with automatic dynamics processing for untagged tracks."
+    "Authorized Ignifire accounts can now opt into the Testing update channel.",
+    "Testing access is validated against the signed-in account before update checks and downloads.",
+    "Development builds now publish automatically from the testing branch without affecting Beta or Stable."
   ],
-  "notes": "Fixes the playlist player edge treatment and adds user-controlled playback volume normalization with metadata-aware loudness balancing.",
+  "notes": "Adds an account-authorized Testing channel and a separate testing-branch build pipeline.",
   "downloadUrl": "",
   "sha256": ""
 }

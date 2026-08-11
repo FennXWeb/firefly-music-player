@@ -36,8 +36,8 @@ Ignifire checks for updates on startup and every 30 minutes while running. The c
 
 - **Stable** reads `updates/latest.json` from the `main` branch.
 - **Beta** reads `updates/latest.json` from the `beta` branch.
-- **Testing** is the development branch and does not publish a public updater feed.
+- **Testing** reads authorized development builds from the `testing` branch and appears only for entitled signed-in accounts.
 
 Update downloads are accepted only from GitHub release hosts. If a manifest includes a SHA-256 checksum, Ignifire verifies the complete download before offering to launch it. The updater downloads the guided installer; portable builds remain available separately. Both editions keep using the same persistent data directory after an update, and uninstalling Ignifire leaves that library data in place.
 
-New development lands on `testing`. Promotion from `testing` to `beta` publishes the public beta build; promotion from `beta` to `main` requires explicit owner approval. The public repository makes every branch readable, while GitHub write access remains limited to authorized collaborators.
+New development lands on `testing`. Testing-channel access is validated against the signed-in account before update checks or downloads. Promotion from `testing` to `beta` publishes the public beta build; promotion from `beta` to `main` requires explicit owner approval. The public repository makes every branch and GitHub release asset readable, while repository write access remains limited to authorized collaborators.

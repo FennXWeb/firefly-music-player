@@ -35,7 +35,8 @@ const managedArtworkDirectory = path.join(dataDirectory, 'artwork');
 const apiPassBaseUrl = 'https://api.apipass.dev';
 const ignifireAccountEndpoint = 'https://accounts.ignifire.app';
 const updateRepository = 'FennXWeb/firefly-music-player';
-const updateBranches = { stable: 'main', beta: 'beta' };
+const updateBranches = { stable: 'main', beta: 'beta', testing: 'testing' };
+const testingUpdateUserIds = new Set(['Nu5I5SN90HKg7ROVdeHuEDIOOU8bmtWC']);
 const ignifireDiscordApplicationId = '1535771097595777104';
 let preparedUpdate = null;
 let primaryWindow = null;
@@ -463,14 +464,20 @@ async function accountRequest(resource, options = {}) {
 }
 async function accountStatus() {
   const stored = await accountCredentials();
-  if (!stored.token) return { signedIn: false, configured: true };
+  if (!stored.token) return { signedIn: false, configured: true, testingUpdatesAuthorized: false };
   try {
     const response = await accountRequest('/v1/me');
-    return { signedIn: true, configured: true, ...(await response.json()) };
+    const status = await response.json(),userId=String(status?.user?.id||'');
+    return { signedIn: true, configured: true, ...status, testingUpdatesAuthorized: testingUpdateUserIds.has(userId) };
   } catch (error) {
-    if (error.status === 401) { await updateAccountCredentials({ token: '' });return { signedIn: false, configured: true, expired: true }; }
-    return { signedIn: false, configured: true, offline: true, error: error.message };
+    if (error.status === 401) { await updateAccountCredentials({ token: '' });return { signedIn: false, configured: true, expired: true, testingUpdatesAuthorized: false }; }
+    return { signedIn: false, configured: true, offline: true, error: error.message, testingUpdatesAuthorized: false };
   }
+}
+
+async function requireTestingUpdateAccess() {
+  const status=await accountStatus();
+  if(!status.signedIn||!status.testingUpdatesAuthorized)throw new Error('Testing builds are available only to authorized Ignifire accounts.');
 }
 async function uploadCloudObject(filePath, endpoint, token) {
   const stats = await fs.stat(filePath);if (!stats.isFile()) return null;
@@ -647,12 +654,14 @@ function allowedUpdateUrl(value='') {
   try{const url=new URL(value);return url.protocol==='https:'&&['github.com','objects.githubusercontent.com','release-assets.githubusercontent.com'].some(host=>url.hostname===host||url.hostname.endsWith(`.${host}`))}catch{return false}
 }
 async function checkForUpdates(channel='stable') {
-  const selected=channel==='beta'?'beta':'stable',branch=updateBranches[selected];
+  const selected=channel==='testing'?'testing':channel==='beta'?'beta':'stable',branch=updateBranches[selected];
+  if(selected==='testing')await requireTestingUpdateAccess();
   const manifestUrl=`https://raw.githubusercontent.com/${updateRepository}/${branch}/updates/latest.json?t=${Date.now()}`;
   const response=await net.fetch(manifestUrl,{headers:{Accept:'application/json','User-Agent':`Ignifire/${app.getVersion()}`}});
   if(!response.ok)throw new Error(response.status===404?'This update channel has not been published yet.':`Update server returned ${response.status}.`);
   const manifest=await response.json();
   if(!manifest||typeof manifest.version!=='string')throw new Error('The update manifest is invalid.');
+  if(manifest.channel!==selected||manifest.branch!==branch)throw new Error('The update manifest does not match the selected release channel.');
   const available=compareVersions(manifest.version,app.getVersion())>0;
   return{available,channel:selected,branch,currentVersion:app.getVersion(),version:manifest.version,notes:String(manifest.notes||''),audience:manifest.audience==='user'?'user':'internal',highlights:Array.isArray(manifest.highlights)?manifest.highlights.map(item=>String(item)).slice(0,8):[],publishedAt:manifest.publishedAt||null,downloadUrl:available&&allowedUpdateUrl(manifest.downloadUrl)?manifest.downloadUrl:'',sha256:typeof manifest.sha256==='string'?manifest.sha256.toUpperCase():''};
 }

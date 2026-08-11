@@ -1,10 +1,11 @@
-name: Beta Windows build
+name: Ignifire Windows channel build
 
 on:
   workflow_dispatch:
   push:
     branches:
       - beta
+      - testing
     paths-ignore:
       - updates/latest.json
 
@@ -12,12 +13,12 @@ permissions:
   contents: write
 
 jobs:
-  beta-release:
+  channel-release:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: beta
+          ref: ${{ github.ref_name }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -33,6 +34,9 @@ jobs:
           $portable = "Ignifire-$version-Portable.exe"
           $cloudServer = "Ignifire-Cloud-Server-$version.zip"
           $webPlayer = "Ignifire-Web-$version.zip"
+          $channel = "${{ github.ref_name }}"
+          $label = if ($channel -eq "testing") { "Testing" } else { "Beta" }
+          $tag = "$channel-v$version"
           tar -a -cf "release/$cloudServer" -C cloud-server package.json package-lock.json .env.example README.md schema.sql src web public
           tar -a -cf "release/$webPlayer" -C web-player index.html styles.css app.js manifest.webmanifest sw.js icons README.md
           $hash = (Get-FileHash "release/$installer" -Algorithm SHA256).Hash
@@ -42,9 +46,12 @@ jobs:
           "cloudServer=$cloudServer" >> $env:GITHUB_OUTPUT
           "webPlayer=$webPlayer" >> $env:GITHUB_OUTPUT
           "sha256=$hash" >> $env:GITHUB_OUTPUT
+          "channel=$channel" >> $env:GITHUB_OUTPUT
+          "label=$label" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
       - uses: actions/upload-artifact@v4
         with:
-          name: Ignifire-Windows-Beta
+          name: Ignifire-Windows-${{ steps.build.outputs.label }}
           path: |
             release/${{ steps.build.outputs.installer }}
             release/${{ steps.build.outputs.portable }}
@@ -52,9 +59,9 @@ jobs:
             release/${{ steps.build.outputs.webPlayer }}
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: beta-v${{ steps.build.outputs.version }}
-          target_commitish: beta
-          name: Ignifire ${{ steps.build.outputs.version }} Beta
+          tag_name: ${{ steps.build.outputs.tag }}
+          target_commitish: ${{ steps.build.outputs.channel }}
+          name: Ignifire ${{ steps.build.outputs.version }} ${{ steps.build.outputs.label }}
           prerelease: true
           make_latest: false
           files: |
@@ -62,15 +69,15 @@ jobs:
             release/${{ steps.build.outputs.portable }}
             release/${{ steps.build.outputs.cloudServer }}
             release/${{ steps.build.outputs.webPlayer }}
-      - name: Publish beta updater manifest
+      - name: Publish channel updater manifest
         shell: pwsh
         run: |
           $manifest = Get-Content updates/latest.json | ConvertFrom-Json
-          $manifest.channel = "beta"
-          $manifest.branch = "beta"
+          $manifest.channel = "${{ steps.build.outputs.channel }}"
+          $manifest.branch = "${{ steps.build.outputs.channel }}"
           $manifest.version = "${{ steps.build.outputs.version }}"
           $manifest.publishedAt = (Get-Date).ToUniversalTime().ToString("o")
-          $manifest.downloadUrl = "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v${{ steps.build.outputs.version }}/${{ steps.build.outputs.installer }}"
+          $manifest.downloadUrl = "https://github.com/FennXWeb/firefly-music-player/releases/download/${{ steps.build.outputs.tag }}/${{ steps.build.outputs.installer }}"
           $manifest.sha256 = "${{ steps.build.outputs.sha256 }}"
           $manifest | ConvertTo-Json | Set-Content updates/latest.json
           git config user.name "github-actions[bot]"
@@ -78,6 +85,6 @@ jobs:
           git add updates/latest.json
           git diff --cached --quiet
           if ($LASTEXITCODE -ne 0) {
-            git commit -m "Publish beta updater manifest for ${{ steps.build.outputs.version }}"
-            git push origin beta
+            git commit -m "Publish ${{ steps.build.outputs.channel }} updater manifest for ${{ steps.build.outputs.version }}"
+            git push origin HEAD:${{ steps.build.outputs.channel }}
           }
