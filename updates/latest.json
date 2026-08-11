@@ -1,15 +1,15 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.50",
-  "publishedAt": "2026-08-11T01:29:19.3452025Z",
+  "version": "0.1.51",
+  "publishedAt": "2026-08-11T01:56:34.6346517Z",
   "audience": "user",
   "highlights": [
-    "Missing or unreadable tracks can now be repaired by choosing a replacement audio file without losing metadata, playlists, artwork, lyrics, or listening history.",
-    "Cloud snapshots compress full-resolution local artwork so large libraries can finish syncing instead of exceeding the server payload limit.",
-    "Ignifire for Web restores the complete catalog and clearly distinguishes streamable tracks from audio files that still need repair."
+    "A new opt-in setting can remove Ignifire's managed local copy only after both the audio file and cloud library snapshot are confirmed saved.",
+    "Tracks and albums downloaded from the cloud are now pinned to this PC so automatic cleanup cannot remove them.",
+    "Removing a cloud download clears its local pin and returns playback to cloud streaming."
   ],
-  "notes": "Adds safe local-and-cloud track replacement, prevents oversized artwork from blocking cloud catalog snapshots, and restores partial web libraries with accurate streamability status.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.50/Ignifire-0.1.50-Setup.exe",
-  "sha256": "B3095AFC655DDA4EB45C1ADC56C4100A8EF14394035B256D4AD5C874D389C70C"
+  "notes": "Adds confirmed post-upload local cleanup and persistent per-track download pins, while preserving original import sources and manually retained downloads.",
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.51/Ignifire-0.1.51-Setup.exe",
+  "sha256": ""
 }

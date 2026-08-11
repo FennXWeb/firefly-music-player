@@ -54,6 +54,7 @@ let cloudSyncInFlight = false;
 let pendingCloudState = null;
 let pendingCloudOptions = null;
 let cloudQuotaBlocked = false;
+const pinnedCloudTrackPaths = new Map();
 let mediaOverlayWindow = null;
 let mediaOverlayTimer = null;
 let splashWindow = null;
@@ -505,6 +506,7 @@ async function embedPortableFiles(value, key = '', cache = new Map()) {
 async function portableCloudState(state, endpoint, token, onProgress) {
   const portable = JSON.parse(JSON.stringify(state || {}));
   const uploadFailures = [];
+  const confirmedCloudTrackIds = new Set();
   portable.liveFolders = [];
   const sourceTracks = new Map((state?.albums || []).flatMap(album => (album.tracks || []).map(track => [track.id, track])));
   const portableTracks=(portable.albums||[]).flatMap(album=>(album.tracks||[]).filter(track=>!track.pending));let completed=0;
@@ -513,7 +515,7 @@ async function portableCloudState(state, endpoint, token, onProgress) {
     const original = sourceTracks.get(track.id), filePath = String(original?.path || '');
     track.path = null;track.url = null;delete track.liveFolderId;delete track.cloudSourceId;delete track.keepLocalCopy;delete track.fileError;
     if (!filePath) { if (original?.cloudFile?.hash) track.cloudFile = original.cloudFile;completed++;onProgress?.({id:track.id,cloudFile:track.cloudFile,completed,total:portableTracks.length});continue; }
-    try { track.cloudFile = await uploadCloudObject(filePath, endpoint, token);delete track.cloudFileUnavailable; }
+    try { track.cloudFile = await uploadCloudObject(filePath, endpoint, token);confirmedCloudTrackIds.add(track.id);delete track.cloudFileUnavailable; }
     catch (error) {
       track.cloudFileUnavailable = true;
       const title = String(track.title || path.basename(filePath) || 'track');
@@ -525,7 +527,7 @@ async function portableCloudState(state, endpoint, token, onProgress) {
   }
   await embedPortableFiles(portable);
   portable.cloudSnapshot = { createdAt: new Date().toISOString(), appVersion: app.getVersion() };
-  return { state: portable, uploadFailures };
+  return { state: portable, uploadFailures, confirmedCloudTrackIds };
 }
 async function uploadCloudSnapshot(state, { manual = false, force = false, retainLocalFiles = false } = {}) {
   if (cloudSyncInFlight) { pendingCloudState = state;pendingCloudOptions = { manual, force, retainLocalFiles };return { queued: true }; }
@@ -547,10 +549,18 @@ async function uploadCloudSnapshot(state, { manual = false, force = false, retai
     const cloudTracks = new Map((portable.albums || []).flatMap(album => (album.tracks || []).filter(track => track.cloudFile?.hash).map(track => [track.id, track.cloudFile])));
     const removedLocalTrackIds = [];
     for (const album of pendingCloudState?.albums || []) for (const track of album.tracks || []) if (cloudTracks.has(track.id)) track.cloudFile = cloudTracks.get(track.id);
-    if (!retainLocalFiles && !state?.settings?.autoDownloadCloudLibrary) {
+    if (state?.settings?.autoDeleteLocalAfterCloudUpload && !retainLocalFiles && !state?.settings?.autoDownloadCloudLibrary) {
+      const latestState = pendingCloudState || await readJson(statePath, state) || state;
+      const latestTracks = new Map((latestState?.albums || []).flatMap(album => album.tracks || []).map(track => [track.id, track]));
+      const protectedLocalPaths = new Set([
+        ...[...latestTracks.values()].filter(track => track.keepLocalCopy && track.path).map(track => path.resolve(track.path).toLowerCase()),
+        ...pinnedCloudTrackPaths.values()
+      ]);
       for (const album of state?.albums || []) for (const track of album.tracks || []) {
-        if (!cloudTracks.has(track.id) || !track.path || track.keepLocalCopy || !isManagedAudioPath(track.path)) continue;
-        await fs.rm(track.path, { force: true }).catch(() => {});removedLocalTrackIds.push(track.id);
+        const latestTrack = latestTracks.get(track.id) || track;
+        if (!prepared.confirmedCloudTrackIds.has(track.id) || !cloudTracks.has(track.id) || !latestTrack.path || latestTrack.keepLocalCopy || pinnedCloudTrackPaths.has(track.id) || protectedLocalPaths.has(path.resolve(latestTrack.path).toLowerCase()) || !isManagedAudioPath(latestTrack.path)) continue;
+        try { await fs.rm(latestTrack.path, { force: true }); } catch { continue; }
+        removedLocalTrackIds.push(track.id);
         const pendingTrack=(pendingCloudState?.albums||[]).flatMap(album=>album.tracks||[]).find(item=>item.id===track.id);if(pendingTrack){pendingTrack.path=null;pendingTrack.url=cloudTrackUrl(cloudTracks.get(track.id));pendingTrack.managedFile=false}
       }
     }
@@ -581,9 +591,18 @@ async function downloadCloudSnapshot() {
   if (response.status === 204) return null;
   const payload = await response.json(), state = payload.state;
   const autoDownload = Boolean(state?.settings?.autoDownloadCloudLibrary);
+  const localState = await readJson(statePath, {});
+  const localTracks = new Map((localState?.albums || []).flatMap(album => album.tracks || []).map(track => [track.id, track]));
   if (autoDownload) await fs.mkdir(cloudCacheDirectory, { recursive: true });
   for (const album of state?.albums || []) for (const track of album.tracks || []) {
     if (!track.cloudFile?.hash) continue;
+    const localTrack = localTracks.get(track.id);
+    if (localTrack?.keepLocalCopy && localTrack.path && isManagedAudioPath(localTrack.path) && String(localTrack.cloudFile?.hash || '') === String(track.cloudFile.hash)) {
+      try {
+        const stats = await fs.stat(localTrack.path);
+        if (stats.isFile()) { track.path = localTrack.path;track.url = pathToFileURL(localTrack.path).href;track.managedFile = true;track.keepLocalCopy = true;pinnedCloudTrackPaths.set(track.id,path.resolve(localTrack.path).toLowerCase());continue; }
+      } catch { /* Redownload below when auto-download is enabled. */ }
+    }
     if (!autoDownload) { track.path = null;track.url = cloudTrackUrl(track.cloudFile);track.managedFile = false;continue; }
     const destination = cloudCacheTrackPath(track.cloudFile.hash, track.cloudFile.name || `${track.id}.audio`);
     try { await fs.stat(destination); }
@@ -595,7 +614,7 @@ async function downloadCloudSnapshot() {
   }
   return { ...payload, state };
 }
-async function downloadCloudTracks(tracks = []) {
+async function downloadCloudTracks(tracks = [], { pin = true } = {}) {
   const stored = await accountCredentials();if (!stored.token) throw new Error('Sign in to download cloud tracks.');
   await fs.mkdir(cloudCacheDirectory, { recursive: true });
   const results = [];
@@ -604,6 +623,7 @@ async function downloadCloudTracks(tracks = []) {
     const destination = cloudCacheTrackPath(hash, cloudFile.name || `${track.id}.audio`);
     try { await fs.stat(destination); }
     catch { const asset = await accountRequest(`/v1/sync/objects/${hash}`, { headers: { Accept: 'application/octet-stream' } });await writeBufferAtomic(destination, Buffer.from(await asset.arrayBuffer())); }
+    if (pin) pinnedCloudTrackPaths.set(track.id,path.resolve(destination).toLowerCase());
     results.push({ id: track.id, path: destination, url: pathToFileURL(destination).href });
   }
   return results;
@@ -613,7 +633,7 @@ async function removeCloudDownloads(tracks = []) {
   for (const track of Array.isArray(tracks) ? tracks : []) {
     if (!track?.cloudFile?.hash || !track.path) continue;
     if (!isManagedAudioPath(track.path)) continue;
-    await fs.rm(track.path, { force: true });results.push({ id: track.id, url: cloudTrackUrl(track.cloudFile) });
+    await fs.rm(track.path, { force: true });pinnedCloudTrackPaths.delete(track.id);results.push({ id: track.id, url: cloudTrackUrl(track.cloudFile) });
   }
   return results;
 }
@@ -1312,7 +1332,7 @@ app.whenReady().then(() => {
     return uploadCloudSnapshot(state, { manual: true, force: true, retainLocalFiles: true });
   });
   ipcMain.handle('account:restore', async () => downloadCloudSnapshot());
-  ipcMain.handle('account:download-tracks', async (_event, tracks) => downloadCloudTracks(tracks));
+  ipcMain.handle('account:download-tracks', async (_event, tracks, options) => downloadCloudTracks(tracks, options));
   ipcMain.handle('account:remove-downloads', async (_event, tracks) => removeCloudDownloads(tracks));
   ipcMain.handle('library:repair-track', async (_event, track) => chooseTrackReplacement(track));
   ipcMain.handle('library:choose-files', async () => {

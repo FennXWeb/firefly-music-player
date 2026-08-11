@@ -20,7 +20,7 @@ contextBridge.exposeInMainWorld('firefly', {
   syncAccountNow: state => ipcRenderer.invoke('account:sync-now', state),
   syncRepairedTrack: state => ipcRenderer.invoke('account:repair-track-sync', state),
   restoreAccountCloud: () => ipcRenderer.invoke('account:restore'),
-  downloadCloudTracks: tracks => ipcRenderer.invoke('account:download-tracks', tracks),
+  downloadCloudTracks: (tracks, options) => ipcRenderer.invoke('account:download-tracks', tracks, options),
   removeCloudDownloads: tracks => ipcRenderer.invoke('account:remove-downloads', tracks),
   repairTrackFile: track => ipcRenderer.invoke('library:repair-track', track),
   onAccountSyncStatus: callback => { const listener = (_event, status) => callback(status); ipcRenderer.on('account:sync-status', listener); return () => ipcRenderer.removeListener('account:sync-status', listener); },
