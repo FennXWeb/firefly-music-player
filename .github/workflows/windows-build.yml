@@ -34,7 +34,7 @@ jobs:
           $cloudServer = "Ignifire-Cloud-Server-$version.zip"
           $webPlayer = "Ignifire-Web-$version.zip"
           tar -a -cf "release/$cloudServer" -C cloud-server package.json package-lock.json .env.example README.md schema.sql src web public
-          tar -a -cf "release/$webPlayer" -C web-player index.html styles.css app.js README.md
+          tar -a -cf "release/$webPlayer" -C web-player index.html styles.css app.js manifest.webmanifest sw.js icons README.md
           $hash = (Get-FileHash "release/$installer" -Algorithm SHA256).Hash
           "version=$version" >> $env:GITHUB_OUTPUT
           "installer=$installer" >> $env:GITHUB_OUTPUT

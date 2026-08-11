@@ -9,6 +9,9 @@ It intentionally includes only:
 - library search;
 - authenticated streaming from Ignifire cloud storage;
 - basic play, pause, previous, next, shuffle, repeat, seek, and volume controls;
+- a touch-first phone layout with safe-area-aware navigation and a full-screen mobile player;
+- installable PWA support for iPhone, iPad, Android, and desktop browsers;
+- iOS Home Screen metadata, local app icons, standalone display, and an offline application shell;
 - a direct Windows installer download that follows the latest published public build, plus an account-settings link.
 
 It intentionally excludes imports, library editing, Shelf Mode, Suno and AI tools, advanced customization, cloud mutations, and beta-channel switching.
@@ -22,5 +25,8 @@ It intentionally excludes imports, library editing, Shelf Mode, Suno and AI tool
 5. Upload the contents of `Ignifire-Web-<version>.zip` to the website root. `index.html` must be at the root, not inside an extra directory.
 6. Connect the `ignifire.app` domain and wait for Hostinger's SSL certificate to become active.
 7. Visit `https://ignifire.app`, sign in, and verify that a synced cloud track plays and can seek.
+8. On iPhone or iPad, open the site in Safari, tap Share, choose **Add to Home Screen**, and confirm Ignifire launches without Safari chrome.
+
+`sw.js` must remain at the website root so it can control the full site. The service worker caches only the public application shell; authenticated library responses and audio streams are deliberately never cached.
 
 The account and web origins are hard-coded to their production HTTPS domains. Do not publish this build at a different origin without updating the account-service allowlist and the web player's Content Security Policy.
