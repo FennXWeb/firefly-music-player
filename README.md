@@ -35,8 +35,9 @@ OpenAI and provider tokens are kept in a separate credentials file and protected
 Ignifire checks for updates on startup and every 30 minutes while running. The channel can be changed in Settings:
 
 - **Stable** reads `updates/latest.json` from the `main` branch.
-- **Test** reads `updates/latest.json` from the `beta` branch.
+- **Beta** reads `updates/latest.json` from the `beta` branch.
+- **Testing** is the development branch and does not publish a public updater feed.
 
 Update downloads are accepted only from GitHub release hosts. If a manifest includes a SHA-256 checksum, Ignifire verifies the complete download before offering to launch it. The updater downloads the guided installer; portable builds remain available separately. Both editions keep using the same persistent data directory after an update, and uninstalling Ignifire leaves that library data in place.
 
-All routine builds and GitHub prereleases are published from `beta`. The automated workflow cannot publish a stable release. Updating or releasing from `main` requires explicit owner approval.
+New development lands on `testing`. Promotion from `testing` to `beta` publishes the public beta build; promotion from `beta` to `main` requires explicit owner approval. The public repository makes every branch readable, while GitHub write access remains limited to authorized collaborators.

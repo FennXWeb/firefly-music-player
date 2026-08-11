@@ -1,6 +1,6 @@
 {
-  "channel": "beta",
-  "branch": "beta",
+  "channel": "testing",
+  "branch": "testing",
   "version": "0.1.54",
   "publishedAt": "2026-08-11T14:41:31.6234524Z",
   "audience": "user",
@@ -10,6 +10,6 @@
     "ReplayGain metadata is honored when available, with automatic dynamics processing for untagged tracks."
   ],
   "notes": "Fixes the playlist player edge treatment and adds user-controlled playback volume normalization with metadata-aware loudness balancing.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.54/Ignifire-0.1.54-Setup.exe",
-  "sha256": "482ABC808763FB6652D65C06EC1FAB8233A69C8AA191B5261AFC98E5C18A971D"
+  "downloadUrl": "",
+  "sha256": ""
 }
