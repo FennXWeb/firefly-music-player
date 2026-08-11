@@ -2,7 +2,7 @@
   "channel": "beta",
   "branch": "beta",
   "version": "0.1.51",
-  "publishedAt": "2026-08-11T01:56:34.6346517Z",
+  "publishedAt": "2026-08-11T02:04:31.0801530Z",
   "audience": "user",
   "highlights": [
     "A new opt-in setting can remove Ignifire's managed local copy only after both the audio file and cloud library snapshot are confirmed saved.",
@@ -11,5 +11,5 @@
   ],
   "notes": "Adds confirmed post-upload local cleanup and persistent per-track download pins, while preserving original import sources and manually retained downloads.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.51/Ignifire-0.1.51-Setup.exe",
-  "sha256": ""
+  "sha256": "2B6C5094B8EFE7818721CCF2E30F2F2853139D4E45A4F03CA77ACCD47836CD0A"
 }
