@@ -1,15 +1,15 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.51",
-  "publishedAt": "2026-08-11T02:04:31.0801530Z",
+  "version": "0.1.52",
+  "publishedAt": "2026-08-11T02:15:26.8591917Z",
   "audience": "user",
   "highlights": [
-    "A new opt-in setting can remove Ignifire's managed local copy only after both the audio file and cloud library snapshot are confirmed saved.",
-    "Tracks and albums downloaded from the cloud are now pinned to this PC so automatic cleanup cannot remove them.",
-    "Removing a cloud download clears its local pin and returns playback to cloud streaming."
+    "Cloud and download status now updates only the affected song rows and album cards instead of rebuilding the entire library view.",
+    "Play counts, favorites, file repairs, playlist totals, and home listening widgets now refresh in place.",
+    "Settings controls and sidebar playlists avoid unnecessary redraws for a smoother, more stable interface."
   ],
-  "notes": "Adds confirmed post-upload local cleanup and persistent per-track download pins, while preserving original import sources and manually retained downloads.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.51/Ignifire-0.1.51-Setup.exe",
-  "sha256": "2B6C5094B8EFE7818721CCF2E30F2F2853139D4E45A4F03CA77ACCD47836CD0A"
+  "notes": "Introduces keyed, targeted UI refreshes throughout the desktop app while retaining full view rebuilds only for structural library changes.",
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.52/Ignifire-0.1.52-Setup.exe",
+  "sha256": "0C98DC2AD783C00466F7F1B43777BC901AA4AF8F32DCF93AFC62D9B9E9D9FC26"
 }

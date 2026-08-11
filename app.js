@@ -76,6 +76,7 @@ let dynamicDefaultQueue = Promise.resolve();
 let libraryRevision = 0;
 let renderedLibraryRevision = 0;
 let dynamicViewRefreshTimer = null;
+let pendingDynamicViewRefresh = { full:false, tracks:new Set(), albums:new Set(), playlists:new Set(), home:false, sidebar:false };
 let discordPresenceState = { status:'disabled', error:'' };
 let lastDiscordProgressSync = 0;
 const ACCOUNT_STORAGE_LIMIT_BYTES = 256 * 1024 * 1024 * 1024;
@@ -101,10 +102,12 @@ function trackFileErrorBadge(track){return track?.fileError?`<i class="track-err
 function albumCloudState(album){const tracks=(album?.tracks||[]).filter(track=>!track.pending),cloudCount=tracks.filter(isCloudTrack).length;return{cloud:tracks.length>0&&cloudCount===tracks.length,partial:cloudCount>0&&cloudCount<tracks.length,cloudCount,total:tracks.length,downloaded:tracks.length>0&&tracks.every(isCloudDownloaded)}}
 function albumCloudBadge(album){const state=albumCloudState(album);return state.cloud?`<span class="album-cloud-badges"><i>CLOUD</i>${state.downloaded?'<i>DOWNLOADED</i>':''}</span>`:state.partial?`<span class="album-cloud-badges"><i title="${state.cloudCount} of ${state.total} tracks stored">${accountSyncState.status==='syncing'?'SYNCING':'PARTIAL CLOUD'}</i></span>`:''}
 function sameCloudFile(left,right){return String(left?.hash||'')===String(right?.hash||'')&&String(left?.name||'')===String(right?.name||'')&&Number(left?.size||0)===Number(right?.size||0)}
-function refreshVisibleCloudBadges(){
+function refreshVisibleCloudBadges(trackIds=null,albumIds=null){
+  const refreshTracks=trackIds==null||trackIds.size>0,refreshAlbums=albumIds==null||albumIds.size>0;
+  const trackFilter=trackIds?.size?trackIds:null,albumFilter=albumIds?.size?albumIds:null;
   const tracksById=new Map(allTracks().map(track=>[String(track.id),track]));
-  $$('tr[data-track]').forEach(row=>{const track=tracksById.get(String(row.dataset.track)),title=row.querySelector('.song-title');if(!track||!title)return;title.querySelector('.cloud-track-badges')?.remove();const markup=cloudTrackBadge(track);if(markup){const pending=title.querySelector('.pending-badge');if(pending)pending.insertAdjacentHTML('beforebegin',markup);else title.insertAdjacentHTML('beforeend',markup)}});
-  $$('.album-card[data-album],.album-list-row[data-album]').forEach(element=>{const album=albumById(element.dataset.album),markup=album?albumCloudBadge(album):'';element.querySelector('.album-cloud-badges')?.remove();if(!markup)return;if(element.classList.contains('album-card'))element.querySelector('.album-art-wrap')?.insertAdjacentHTML('beforeend',markup);else element.querySelector('.album-list-copy')?.insertAdjacentHTML('afterend',markup)});
+  if(refreshTracks)$$('tr[data-track]').forEach(row=>{const id=String(row.dataset.track);if(trackFilter&&!trackFilter.has(id))return;const track=tracksById.get(id),title=row.querySelector('.song-title');if(!track||!title)return;title.querySelector('.cloud-track-badges')?.remove();const markup=cloudTrackBadge(track);if(markup){const pending=title.querySelector('.pending-badge');if(pending)pending.insertAdjacentHTML('beforebegin',markup);else title.insertAdjacentHTML('beforeend',markup)}});
+  if(refreshAlbums)$$('.album-card[data-album],.album-list-row[data-album]').forEach(element=>{const id=String(element.dataset.album);if(albumFilter&&!albumFilter.has(id))return;const album=albumById(id),markup=album?albumCloudBadge(album):'';element.querySelector('.album-cloud-badges')?.remove();if(!markup)return;if(element.classList.contains('album-card'))element.querySelector('.album-art-wrap')?.insertAdjacentHTML('beforeend',markup);else element.querySelector('.album-list-copy')?.insertAdjacentHTML('afterend',markup)});
 }
 async function setCloudDownload(tracks,download=true,{pin=true}={}){
   const requested=(tracks||[]).filter(isCloudTrack);let eligible=download?requested.filter(track=>!isCloudDownloaded(track)):requested.filter(isCloudDownloaded);if(!download&&eligible.length){const hashes=new Set(eligible.map(track=>track.cloudFile.hash));eligible=allTracks().filter(track=>hashes.has(track.cloudFile?.hash)&&isCloudDownloaded(track))}if(!eligible.length&&!(download&&pin&&requested.some(isCloudDownloaded))){toast(download?'Already downloaded':'No cloud downloads to remove');return}
@@ -112,7 +115,8 @@ async function setCloudDownload(tracks,download=true,{pin=true}={}){
     const results=eligible.length?(download?await window.firefly.downloadCloudTracks(eligible,{pin}):await window.firefly.removeCloudDownloads(eligible)):[],byId=new Map(results.map(result=>[result.id,result]));let updated=0;
     eligible.forEach(track=>{const result=byId.get(track.id);if(!result)return;track.path=result.path||null;track.url=result.url||`ignifire-cloud://track/${track.cloudFile.hash}/${encodeURIComponent(track.cloudFile.name||'track.audio')}`;track.managedFile=Boolean(result.path);if(download&&pin)track.keepLocalCopy=true;else if(!download)delete track.keepLocalCopy;updated++});
     if(download&&pin)requested.forEach(track=>{if(isCloudDownloaded(track)&&!track.keepLocalCopy){track.keepLocalCopy=true;updated++}});
-    saveLibrary();refreshLibraryView();toast(download?'Download complete':'Download removed',`${updated} cloud track${updated===1?'':'s'} updated.`);
+    const affectedTracks=new Set([...requested,...eligible].map(track=>String(track.id))),affectedAlbums=new Set([...requested,...eligible].map(track=>String(track.albumId)).filter(Boolean));
+    saveLibrary({tracks:affectedTracks,albums:affectedAlbums});toast(download?'Download complete':'Download removed',`${updated} cloud track${updated===1?'':'s'} updated.`);
   }catch(error){toast(download?'Could not download tracks':'Could not remove downloads',error.message)}
 }
 const OLD_BANGER_AGE_MS = 90 * 24 * 60 * 60 * 1000;
@@ -135,7 +139,7 @@ function playlistTracks(playlist) {
   const ids = playlist.trackIds || [];
   return ids.map(id => allTracks().find(t => t.id === id)).filter(Boolean);
 }
-function setTrackFavorite(track,value=!track?.favorite){if(!track)return;track.favorite=Boolean(value);saveLibrary();updateFavoriteControl();toast(track.favorite?'Added to favorites':'Removed from favorites',track.title)}
+function setTrackFavorite(track,value=!track?.favorite){if(!track)return;track.favorite=Boolean(value);saveLibrary({tracks:[track.id],albums:[track.albumId],home:true});updateFavoriteControl();toast(track.favorite?'Added to favorites':'Removed from favorites',track.title)}
 function updateFavoriteControl(){const button=$('#favoriteTrack');if(!button)return;const active=Boolean(currentTrack?.favorite);button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));button.title=active?'Remove from favorites':'Add to favorites'}
 const playlistSortLabels={manual:'Manual order','title-asc':'Title · A–Z','artist-asc':'Artist · A–Z','album-asc':'Album · A–Z','added-desc':'Recently added','plays-desc':'Most played','duration-asc':'Shortest first'};
 function playlistSortMode(playlist){return playlist?.sortMode||settings.playlistDefaultSort||'manual'}
@@ -183,7 +187,7 @@ function addBulkSelectionToPlaylist(){
   const tracks=selectedBulkTracks(),destinations=leafPlaylists();
   if(!tracks.length)return;if(!destinations.length){toast('Create a playlist first');return}
   openModal(`<div class="modal-head"><h2>Add selection to playlist</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><p class="modal-intro">Add ${tracks.length} selected track${tracks.length===1?'':'s'} to:</p><div class="detected-list">${destinations.map(playlist=>`<button class="detected-track" data-add-bulk-to-playlist="${playlist.id}" style="background:transparent;color:inherit;text-align:left"><i class="status-dot"></i><span><b>${esc(playlist.title)}</b><small>${playlistTracks(playlist).length} songs</small></span><em>ADD</em></button>`).join('')}</div></div>`,true);
-  $$('[data-add-bulk-to-playlist]',modalLayer).forEach(button=>button.onclick=()=>{const playlist=findPlaylistById(button.dataset.addBulkToPlaylist);playlist.trackIds=playlist.trackIds||[];let added=0;tracks.forEach(track=>{if(!playlist.trackIds.includes(track.id)){playlist.trackIds.push(track.id);added++}});saveLibrary();closeModal();toast(added?'Selection added to playlist':'Selection already in playlist',added?`${added} tracks added to ${playlist.title}`:playlist.title)});
+  $$('[data-add-bulk-to-playlist]',modalLayer).forEach(button=>button.onclick=()=>{const playlist=findPlaylistById(button.dataset.addBulkToPlaylist);playlist.trackIds=playlist.trackIds||[];let added=0;tracks.forEach(track=>{if(!playlist.trackIds.includes(track.id)){playlist.trackIds.push(track.id);added++}});saveLibrary({playlists:[playlist.id]});closeModal();toast(added?'Selection added to playlist':'Selection already in playlist',added?`${added} tracks added to ${playlist.title}`:playlist.title)});
 }
 function removePlaylistTrackReferences(playlist,ids){if(Array.isArray(playlist.trackIds))playlist.trackIds=playlist.trackIds.filter(id=>!ids.has(id));(playlist.children||[]).forEach(child=>removePlaylistTrackReferences(child,ids))}
 function deleteBulkSelection(){
@@ -219,24 +223,82 @@ function persistCurrentState(delay=120) {
     persistenceTimer = setTimeout(() => window.firefly.saveState(state).then(result=>{if(result?.state)adoptExternalArtworkReferences(result.state);if(!legacyCacheRetired){try{localStorage.removeItem('firefly-library-v1');legacyCacheRetired=true}catch{}}}).catch(() => toast('Could not save library','Ignifire will retry after the next change.')), delay);
   }
 }
-function saveLibrary() {
+function mergeDynamicRefresh(request={}) {
+  pendingDynamicViewRefresh.full ||= request.full === true || request.refresh === 'full';
+  for(const id of request.tracks||[])if(id!=null)pendingDynamicViewRefresh.tracks.add(String(id));
+  for(const id of request.albums||[])if(id!=null)pendingDynamicViewRefresh.albums.add(String(id));
+  for(const id of request.playlists||[])if(id!=null)pendingDynamicViewRefresh.playlists.add(String(id));
+  pendingDynamicViewRefresh.home ||= request.home === true;
+  pendingDynamicViewRefresh.sidebar ||= request.sidebar === true;
+}
+function takeDynamicRefresh(){const request=pendingDynamicViewRefresh;pendingDynamicViewRefresh={full:false,tracks:new Set(),albums:new Set(),playlists:new Set(),home:false,sidebar:false};return request}
+function saveLibrary(refresh={}) {
   pruneEmptyAlbums();
   syncShelves();
   libraryRevision++;
   persistCurrentState();
-  renderSidebarPlaylists();
-  scheduleDynamicViewRefresh();
+  const request=typeof refresh==='string'?{refresh}:{...refresh};
+  if(request.refresh==='none')return;
+  request.sidebar=request.sidebar!==false;
+  scheduleDynamicViewRefresh(70,request);
 }
-function scheduleDynamicViewRefresh(delay=90) {
-  const targetRevision=libraryRevision;clearTimeout(dynamicViewRefreshTimer);
+function scheduleDynamicViewRefresh(delay=70,request={}) {
+  mergeDynamicRefresh(request);clearTimeout(dynamicViewRefreshTimer);
   dynamicViewRefreshTimer=setTimeout(()=>{
-    if(renderedLibraryRevision>=targetRevision)return;
     const active=document.activeElement,editing=active&&view.contains(active)&&['INPUT','TEXTAREA','SELECT'].includes(active.tagName);
-    if(editing){scheduleDynamicViewRefresh(350);return}
-    const content=$('#content'),scrollTop=content?.scrollTop||0;
-    render();
-    requestAnimationFrame(()=>{if(content)content.scrollTop=scrollTop});
+    if(editing){scheduleDynamicViewRefresh(260);return}
+    const next=takeDynamicRefresh();
+    if(next.full){const content=$('#content'),scrollTop=content?.scrollTop||0;render();requestAnimationFrame(()=>{if(content)content.scrollTop=scrollTop});return}
+    refreshDynamicView(next);renderedLibraryRevision=libraryRevision;
   },delay);
+}
+function refreshVisibleTrackEntities(trackIds=new Set()){
+  const filter=trackIds.size?trackIds:null,tracksById=new Map(allTracks().map(track=>[String(track.id),track]));
+  $$('tr[data-track]',view).forEach(row=>{
+    const id=String(row.dataset.track);if(filter&&!filter.has(id))return;const track=tracksById.get(id);if(!track)return;
+    const album=albumById(track.albumId)||{cover:'cover-8'},cells=row.querySelectorAll('td'),title=row.querySelector('.song-title');
+    row.classList.toggle('pending-row',Boolean(track.pending));row.classList.toggle('track-file-error',Boolean(track.fileError));
+    const thumb=title?.querySelector('.thumb');if(thumb){thumb.className=`thumb ${album.cover||'cover-8'}`;if(album.customCover){thumb.style.backgroundImage=`url("${album.customCover}")`;thumb.style.backgroundSize='cover'}else{thumb.style.removeProperty('background-image');thumb.style.removeProperty('background-size')}}
+    const copy=title?.querySelector(':scope > span');if(copy){const name=copy.querySelector('b'),artist=copy.querySelector('small');if(name)name.textContent=track.title;if(artist)artist.textContent=track.artist}
+    title?.querySelector('.track-error-badge')?.remove();if(track.fileError&&title){const anchor=title.querySelector('.cloud-track-badges,.pending-badge');if(anchor)anchor.insertAdjacentHTML('beforebegin',trackFileErrorBadge(track));else title.insertAdjacentHTML('beforeend',trackFileErrorBadge(track))}
+    if(cells[2])cells[2].textContent=track.album;if(cells[3])cells[3].textContent=track.pending?'â€”':String(track.plays||0);if(cells[4])cells[4].textContent=track.pending?'â€”':String(track.duration||'');
+  });
+}
+function refreshAlbumDetailCloudAction(album){
+  const detail=$(`.album-detail[data-album="${CSS.escape(String(album?.id||''))}"]`,view);if(!detail)return;const state=albumCloudState(album),current=$('[data-detail-cloud-download]',detail),edit=$('[data-detail-edit]',detail);
+  if(!state.cloud){current?.remove();return}
+  const markup=`${icon(state.downloaded?'close':'download')} ${state.downloaded?'Remove download':'Download album'}`;
+  if(current){current.innerHTML=markup;current.onclick=()=>setCloudDownload(album.tracks,!state.downloaded)}else if(edit){edit.insertAdjacentHTML('beforebegin',`<button class="ghost" data-detail-cloud-download>${markup}</button>`);$('[data-detail-cloud-download]',detail).onclick=()=>setCloudDownload(album.tracks,!state.downloaded)}
+}
+function refreshVisibleAlbumEntities(albumIds=new Set()){
+  const filter=albumIds.size?albumIds:null;
+  $$('[data-album]',view).forEach(element=>{
+    const id=String(element.dataset.album);if(filter&&!filter.has(id))return;const album=albumById(id);if(!album)return;
+    if(element.matches('.album-card')){const title=element.querySelector('h3'),summary=element.querySelector('p');if(title)title.textContent=album.title;if(summary)summary.textContent=element.closest('.artist-detail')?`${album.year} Â· ${album.tracks.length} tracks`:`${album.artist} Â· ${album.year}`;const wrap=element.querySelector('.album-art-wrap');let favorite=wrap?.querySelector('.album-favorite-badge');if(album.favorite&&!favorite)wrap?.querySelector('.quick-play')?.insertAdjacentHTML('beforebegin','<span class="album-favorite-badge">â™¥</span>');if(!album.favorite)favorite?.remove()}
+    if(element.matches('.album-list-row')){const copy=element.querySelector('.album-list-copy'),parts=element.querySelectorAll(':scope > span:not(.album-list-copy):not(.album-cloud-badges)');if(copy){copy.querySelector('b').textContent=album.title;copy.querySelector('small').textContent=`${album.artist} Â· ${album.year}`}if(parts[0])parts[0].textContent=`${album.tracks.length} tracks`;if(parts[1])parts[1].textContent=album.genre||'Uncategorized'}
+  });
+  const detail=view.querySelector('.album-detail[data-album]');if(detail){const album=albumById(detail.dataset.album);if(album&&(!filter||filter.has(String(album.id))))refreshAlbumDetailCloudAction(album)}
+}
+function refreshPlaylistSummaries(playlistIds=new Set()){
+  const filter=playlistIds.size?playlistIds:null;
+  $$('[data-playlist-card]',view).forEach(card=>{const id=String(card.dataset.playlistCard);if(filter&&!filter.has(id))return;const playlist=findPlaylistById(id);if(!playlist)return;const title=card.querySelector('h3'),summary=card.querySelector('p');if(title)title.textContent=playlist.title;if(summary)summary.textContent=`${playlist.children?`${playlist.children.length} sub-playlists Â· `:''}${playlistTracks(playlist).length} songs`});
+  if($('[data-smart]',view)){const counts={today:todaysMix().tracks.length,backlog:allTracks().filter(track=>!track.lastPlayed).length,old:allTracks().filter(isOldBanger).length,hits:Math.min(50,allTracks().filter(track=>!track.pending).length)};for(const[type,count]of Object.entries(counts)){const badge=$(`[data-smart="${type}"] b`,view);if(badge)badge.textContent=String(count)}}
+  if(currentView.startsWith('playlist:')){const playlist=findPlaylistById(currentView.slice(9)),summary=$('.playlist-detail-head p',view);if(playlist&&summary){const tracks=playlistTracks(playlist);summary.textContent=`${tracks.length} songs${playlist.children?` Â· ${playlist.children.length} sub-playlists`:''}`}}
+}
+function refreshHomeWidgets(){
+  if(currentView!=='home')return;const playable=allTracks().filter(track=>!track.pending),recent=recentlyPlayedTracks(6),totalPlays=playable.reduce((sum,track)=>sum+(Number(track.plays)||0),0),heard=playable.filter(track=>track.lastPlayed).length,genreCount=new Set(playable.map(genreForTrack)).size;
+  const metrics=$$('.pulse-metrics article b',view);[playable.length,totalPlays,heard,genreCount].forEach((value,index)=>{if(metrics[index])metrics[index].textContent=String(value)});
+  const recentHost=$('#homeRecentlyPlayed',view);if(recentHost){recentHost.innerHTML=recent.length?homeTrackRows(recent):'<div class="home-panel-empty"><b>Your listening trail starts here</b><span>Played songs will collect in this space.</span></div>';bindHomeTrackCollection('#homeRecentlyPlayed',recent)}
+}
+function refreshDynamicView(request={}){
+  if(request.sidebar)renderSidebarPlaylists();
+  const albumCount=$('#albumCount'),songCount=$('#songCount');if(albumCount)albumCount.textContent=String(albums.length);if(songCount)songCount.textContent=String(allTracks().length);
+  const trackIds=request.tracks||new Set(),albumIds=request.albums||new Set(),playlistIds=request.playlists||new Set();
+  if(trackIds.size)refreshVisibleTrackEntities(trackIds);
+  if(trackIds.size||albumIds.size)refreshVisibleCloudBadges(trackIds,albumIds);
+  if(albumIds.size)refreshVisibleAlbumEntities(albumIds);
+  if(playlistIds.size)refreshPlaylistSummaries(playlistIds);
+  if(request.home)refreshHomeWidgets();updateFavoriteControl();updatePlayingTrackRows();updatePlayerPlaybackContext();applySelectionClasses();renderBulkSelectionBar();updateAccountSyncStatusView();
 }
 function refreshLibraryView({preserveScroll=true}={}) {
   clearTimeout(dynamicViewRefreshTimer);
@@ -338,10 +400,11 @@ function applyCloudState(payload,{notify=true}={}){
 }
 function applyCloudSyncResult(result,{persist=true}={}){
   const files=new Map((result?.trackFiles||[]).map(item=>[item.id,item.cloudFile]));
-  const removed=new Set(result?.removedLocalTrackIds||[]);let changed=false;
+  const removed=new Set(result?.removedLocalTrackIds||[]),affectedTracks=new Set([...files.keys(),...removed].map(String));let changed=false;
   allTracks().forEach(track=>{const cloudFile=files.get(track.id);if(cloudFile&&!sameCloudFile(track.cloudFile,cloudFile)){track.cloudFile=cloudFile;changed=true}if(removed.has(track.id)&&track.cloudFile?.hash){const cloudUrl=`ignifire-cloud://track/${track.cloudFile.hash}/${encodeURIComponent(track.cloudFile.name||'track.audio')}`;if(track.path!==null||track.managedFile||track.url!==cloudUrl){track.path=null;track.url=cloudUrl;track.managedFile=false;changed=true}}});
-  if(changed&&persist){clearTimeout(cloudMarkerPersistenceTimer);saveLibrary()}
-  else if(changed){refreshVisibleCloudBadges();clearTimeout(cloudMarkerPersistenceTimer);cloudMarkerPersistenceTimer=setTimeout(()=>saveLibrary(),12000)}
+  const affectedAlbums=new Set(allTracks().filter(track=>affectedTracks.has(String(track.id))).map(track=>String(track.albumId)).filter(Boolean));
+  if(changed&&persist){clearTimeout(cloudMarkerPersistenceTimer);saveLibrary({tracks:affectedTracks,albums:affectedAlbums})}
+  else if(changed){refreshVisibleCloudBadges(affectedTracks,affectedAlbums);refreshVisibleAlbumEntities(affectedAlbums);clearTimeout(cloudMarkerPersistenceTimer);cloudMarkerPersistenceTimer=setTimeout(()=>saveLibrary({tracks:affectedTracks,albums:affectedAlbums}),12000)}
   return changed;
 }
 async function initializeAccount(){
@@ -463,7 +526,10 @@ function updatePlayerPlaybackContext() {
 function renderSidebarPlaylists() {
   const host = $('#miniPlaylists');
   if (!host) return;
-  host.innerHTML = customPlaylists.length ? customPlaylists.slice(0,6).map(p => `<button data-sidebar-playlist="${p.id}">${playlistCoverMarkup(p,'playlist-cover-mini')}<span><b>${esc(p.title)}</b><small>${playlistTracks(p).length} songs</small></span></button>`).join('') : `<div class="sidebar-empty">No playlists yet.<br>Use + to create one.</div>`;
+  const visible=customPlaylists.slice(0,6),signature=JSON.stringify(visible.map(playlist=>[playlist.id,playlist.title,playlistTracks(playlist).length,playlist.color,playlist.coverDesign]));
+  if(host.dataset.signature===signature)return;
+  host.dataset.signature=signature;
+  host.innerHTML = visible.length ? visible.map(p => `<button data-sidebar-playlist="${p.id}">${playlistCoverMarkup(p,'playlist-cover-mini')}<span><b>${esc(p.title)}</b><small>${playlistTracks(p).length} songs</small></span></button>`).join('') : `<div class="sidebar-empty">No playlists yet.<br>Use + to create one.</div>`;
 }
 
 function accountDisplayName(){return String(accountState.user?.name||accountIdentity()).trim()||'Ignifire listener'}
@@ -504,6 +570,7 @@ function render() {
   updateHistoryControls();
   applySelectionClasses();renderBulkSelectionBar();renderQueue();updatePlayingTrackRows();updatePlayerPlaybackContext();
   renderedLibraryRevision=libraryRevision;
+  clearTimeout(dynamicViewRefreshTimer);takeDynamicRefresh();
 }
 
 function albumCover(a, extra = '') {
@@ -921,7 +988,7 @@ function albumContext(id,x,y) {
     {label:'Play album',icon:'play',action:()=>playTrackQueue(album.tracks)},
     {label:'Play next',icon:'next',action:()=>queueTracksNext(album.tracks,album.title)},
     {label:'Add album to playlist',icon:'playlist',action:()=>addAlbumToPlaylist(album)},
-    {label:album.favorite?'Remove album favorite':'Favorite album',icon:'spark',action:()=>{album.favorite=!album.favorite;saveLibrary();render();toast(album.favorite?'Album favorited':'Album unfavorited',album.title)}},
+    {label:album.favorite?'Remove album favorite':'Favorite album',icon:'spark',action:()=>{album.favorite=!album.favorite;saveLibrary({albums:[album.id],home:true});toast(album.favorite?'Album favorited':'Album unfavorited',album.title)}},
     {label:'Edit album',icon:'settings',action:()=>editAlbum(id)},
     {label:'Pull metadata & art',icon:'spark',action:()=>metadataLookup(album)},
     {label:'Find full case art',icon:'image',action:()=>caseArtLookup(album)},
@@ -947,7 +1014,7 @@ function addAlbumToPlaylist(album) {
   const destinations=leafPlaylists();
   if(!destinations.length){toast('Create a playlist first');return}
   openModal(`<div class="modal-head"><h2>Add album to playlist</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><p class="modal-intro">Add all ${album.tracks.length} tracks from <b>${esc(album.title)}</b>.</p><div class="detected-list">${destinations.map(playlist=>`<button class="detected-track" data-add-album-to-playlist="${playlist.id}" style="background:transparent;color:inherit;text-align:left"><i class="status-dot"></i><span><b>${esc(playlist.title)}</b><small>${playlistTracks(playlist).length} songs</small></span><em>ADD ALBUM</em></button>`).join('')}</div></div>`,true);
-  $$('[data-add-album-to-playlist]',modalLayer).forEach(button=>button.onclick=()=>{const playlist=findPlaylistById(button.dataset.addAlbumToPlaylist);playlist.trackIds=playlist.trackIds||[];let added=0;album.tracks.forEach(track=>{if(!playlist.trackIds.includes(track.id)){playlist.trackIds.push(track.id);added++}});saveLibrary();closeModal();toast(added?'Album added to playlist':'Album already in playlist',added?`${added} tracks added to ${playlist.title}`:playlist.title)});
+  $$('[data-add-album-to-playlist]',modalLayer).forEach(button=>button.onclick=()=>{const playlist=findPlaylistById(button.dataset.addAlbumToPlaylist);playlist.trackIds=playlist.trackIds||[];let added=0;album.tracks.forEach(track=>{if(!playlist.trackIds.includes(track.id)){playlist.trackIds.push(track.id);added++}});saveLibrary({playlists:[playlist.id]});closeModal();toast(added?'Album added to playlist':'Album already in playlist',added?`${added} tracks added to ${playlist.title}`:playlist.title)});
 }
 
 function editArtistImage(name){
@@ -990,7 +1057,7 @@ async function artistImageLookup(name,animatedOnly=false){
 function addTrackToPlaylist(track) {
   const destinations=leafPlaylists();if(!destinations.length){toast('Create a playlist first');return}
   openModal(`<div class="modal-head"><h2>Add to playlist</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><div class="detected-list">${destinations.map(p=>`<button class="detected-track" data-add-to-playlist="${p.id}" style="background:transparent;color:inherit;text-align:left"><i class="status-dot"></i><span><b>${esc(p.title)}</b><small>${playlistTracks(p).length} songs</small></span><em>ADD</em></button>`).join('')}</div></div>`,true);
-  $$('[data-add-to-playlist]',modalLayer).forEach(btn=>btn.onclick=()=>{const p=findPlaylistById(btn.dataset.addToPlaylist);p.trackIds=p.trackIds||[];if(!p.trackIds.includes(track.id))p.trackIds.push(track.id);saveLibrary();closeModal();toast('Added to playlist',p.title)});
+  $$('[data-add-to-playlist]',modalLayer).forEach(btn=>btn.onclick=()=>{const p=findPlaylistById(btn.dataset.addToPlaylist);p.trackIds=p.trackIds||[];if(!p.trackIds.includes(track.id))p.trackIds.push(track.id);saveLibrary({playlists:[p.id]});closeModal();toast('Added to playlist',p.title)});
 }
 
 async function repairTrackFile(track) {
@@ -1007,7 +1074,7 @@ async function repairTrackFile(track) {
       if(position>0)audio.addEventListener('loadedmetadata',()=>{try{audio.currentTime=Math.min(position,Math.max(0,(audio.duration||position)-.1))}catch{/* A repaired stream may not be seekable yet. */}},{once:true});
       if(wasPlaying)tryPlayCurrentAudio();
     }
-    saveLibrary();refreshLibraryView();
+    saveLibrary({tracks:[track.id],albums:[track.albumId]});
     const shouldRepairCloud=hadCloudCopy||(accountState.signedIn&&settings.cloudSyncEnabled);
     if(!shouldRepairCloud){toast('Track file repaired',`${track.title} now uses ${replacement.fileName}.`);return}
     accountSyncState={status:'syncing',phase:'tracks'};updateAccountSyncStatusView();
@@ -1124,12 +1191,12 @@ function renderSettings() {
   if(settingsTab==='integrations'){const sections=$$('.settings-section',view);(sections[1]||sections[0])?.insertAdjacentHTML(sections[1]?'beforebegin':'afterend',discordSettingsMarkup());updateDiscordStatusView()}
   if(settingsTab==='account'&&accountState.signedIn){const cloudToggle=$('[data-setting-toggle="cloudSyncEnabled"]',view)?.closest('.setting-row');cloudToggle?.insertAdjacentHTML('afterend',`${settingToggle('autoDownloadCloudLibrary','Auto-download library','Keep every available cloud track downloaded on this PC')}${settingToggle('autoDeleteLocalAfterCloudUpload','Remove local files after upload','Free space only after Ignifire confirms both the audio upload and library backup. Manually downloaded tracks stay on this PC')}`)}
   $$('[data-settings-tab]',view).forEach(button=>button.onclick=()=>{settingsTab=button.dataset.settingsTab;renderSettings()});
-  $$('.accent-swatches [data-accent]',view).forEach(button=>button.onclick=()=>{settings.accent=button.dataset.accent;settings.accentRgb=button.dataset.rgb;applySettings();saveLibrary();renderSettings()});
-  if($('#customAccent'))$('#customAccent').oninput=event=>{const hex=event.target.value,parts=hex.match(/[a-f\d]{2}/gi).map(value=>parseInt(value,16));settings.accent=hex;settings.accentRgb=parts.join(',');applySettings();saveLibrary()};
-  $$('[data-setting-toggle]',view).forEach(button=>button.onclick=()=>{const key=button.dataset.settingToggle;settings[key]=!settings[key];if(key==='shuffle')setShuffleEnabled(settings[key],{persist:false});if(key==='repeatMode')repeatMode=settings.repeatMode;applySettings();saveLibrary();if(key.startsWith('discord'))configureDiscordPresence();if(key==='autoDownloadCloudLibrary'&&settings[key])setCloudDownload(allTracks(),true,{pin:false});renderSettings()});
-  $$('[data-setting-select]',view).forEach(select=>select.onchange=()=>{const key=select.dataset.settingSelect;settings[key]=select.value;if(key==='playbackRate')settings[key]=Number(select.value);if(key==='repeatMode')repeatMode=settings.repeatMode;if(key==='visualizerStyle')visualizerStyle=settings.visualizerStyle;if(key.startsWith('discord'))configureDiscordPresence();applySettings();saveLibrary();render()});
+  $$('.accent-swatches [data-accent]',view).forEach(button=>button.onclick=()=>{settings.accent=button.dataset.accent;settings.accentRgb=button.dataset.rgb;$$('.accent-swatches [data-accent]',view).forEach(option=>option.classList.toggle('active',option===button));applySettings();saveLibrary({refresh:'none'})});
+  if($('#customAccent'))$('#customAccent').oninput=event=>{const hex=event.target.value,parts=hex.match(/[a-f\d]{2}/gi).map(value=>parseInt(value,16));settings.accent=hex;settings.accentRgb=parts.join(',');$$('.accent-swatches [data-accent]',view).forEach(option=>option.classList.remove('active'));applySettings();saveLibrary({refresh:'none'})};
+  $$('[data-setting-toggle]',view).forEach(button=>button.onclick=()=>{const key=button.dataset.settingToggle;settings[key]=!settings[key];button.classList.toggle('on',Boolean(settings[key]));button.setAttribute('aria-pressed',String(Boolean(settings[key])));if(key==='shuffle')setShuffleEnabled(settings[key],{persist:false});if(key==='repeatMode')repeatMode=settings.repeatMode;applySettings();saveLibrary({refresh:'none'});if(key.startsWith('discord'))configureDiscordPresence();if(key==='cloudSyncEnabled'){const syncNow=$('#accountSyncNow');if(syncNow)syncNow.disabled=!settings[key]}if(key==='autoDownloadCloudLibrary'&&settings[key])setCloudDownload(allTracks(),true,{pin:false})});
+  $$('[data-setting-select]',view).forEach(select=>select.onchange=()=>{const key=select.dataset.settingSelect;settings[key]=select.value;if(key==='playbackRate')settings[key]=Number(select.value);if(key==='repeatMode')repeatMode=settings.repeatMode;if(key==='visualizerStyle')visualizerStyle=settings.visualizerStyle;if(key.startsWith('discord'))configureDiscordPresence();applySettings();saveLibrary({refresh:'none'})});
   $$('[data-setting-range]',view).forEach(range=>range.oninput=()=>{const key=range.dataset.settingRange,value=Number(range.value),percent=(value-Number(range.min))/(Number(range.max)-Number(range.min))*100;settings[key]=value;range.style.setProperty('--range',`${percent}%`);range.nextElementSibling.textContent=`${value}${key==='volume'||key==='uiScale'?'%':key==='playbackRate'?'×':key==='crossfade'?' sec':''}`;if(key==='volume')setVolume(value);else{applySettings();saveLibrary()}});
-  if($('#updateChannel'))$('#updateChannel').onchange=e=>{settings.updateChannel=e.target.value==='beta'?'beta':'stable';updateState={status:'idle',channel:settings.updateChannel,available:false,progress:null};saveLibrary();renderUpdateWidget();checkForUpdates(true)};
+  if($('#updateChannel'))$('#updateChannel').onchange=e=>{settings.updateChannel=e.target.value==='beta'?'beta':'stable';updateState={status:'idle',channel:settings.updateChannel,available:false,progress:null};saveLibrary({refresh:'none'});renderUpdateWidget();checkForUpdates(true)};
   if($('#checkForUpdates'))$('#checkForUpdates').onclick=()=>checkForUpdates(true);if($('#showUpdateDetails'))$('#showUpdateDetails').onclick=openUpdateModal;
   if($('#reconnectDiscord'))$('#reconnectDiscord').onclick=()=>configureDiscordPresence(true);
   if($('#accountSignIn'))$('#accountSignIn').onclick=()=>openAccountPortal('signin');if($('#accountCreate'))$('#accountCreate').onclick=()=>openAccountPortal('signup');if($('#accountManagePasskeys'))$('#accountManagePasskeys').onclick=()=>openAccountPortal('passkeys');
@@ -1468,7 +1535,7 @@ function applyLiveFolderSnapshot(snapshot,{persist=true,notify=true}={}){
   const staleIds=new Set(allTracks().filter(track=>track.liveFolderId===folder.id&&!activeIds.has(track.id)).map(track=>track.id));
   if(staleIds.size){albums.forEach(album=>album.tracks=album.tracks.filter(track=>!staleIds.has(track.id)));playbackQueue=playbackQueue.filter(track=>!staleIds.has(track.id));playbackOriginalQueue=playbackOriginalQueue.filter(track=>!staleIds.has(track.id));staleIds.forEach(id=>selectedTrackIds.delete(id))}
   folder.trackCount=audioEntries.length;folder.albumCount=[...groups.values()].filter(group=>group.length>1||mostCommon(group.map(entry=>entry.metadata?.album))).length;
-  if(persist&&(added||staleIds.size||updated||priorStatus!=='synced'))saveLibrary();
+  if(persist&&(added||staleIds.size||updated||priorStatus!=='synced'))saveLibrary({refresh:(added||staleIds.size)?'full':'targeted'});
   if(notify&&(added||staleIds.size||updated))toast('Live folder synced',`${folder.name} · ${added} added · ${staleIds.size} removed${updated?` · ${updated} refreshed`:''}`);
   return{added,removed:staleIds.size,updated,offline:false};
 }
@@ -1477,7 +1544,7 @@ async function initializeLiveFolderSync(){
   window.firefly.onLiveFolderSnapshot?.(snapshot=>applyLiveFolderSnapshot(snapshot));
   if(!liveFolders.length)return;
   liveFolders.forEach(folder=>folder.status='scanning');
-  try{const snapshots=await window.firefly.syncLiveFolders(liveFolders);let changes=0,offline=0;snapshots.forEach(snapshot=>{const result=applyLiveFolderSnapshot(snapshot,{persist:false,notify:false});changes+=result.added+result.removed+result.updated;offline+=Number(result.offline)});saveLibrary();if(changes)toast('Live folders refreshed',`${changes} library change${changes===1?'':'s'} applied.`);if(offline)toast(`${offline} live folder${offline===1?' is':'s are'} offline`,'Ignifire will keep checking in the background.')}
+  try{const snapshots=await window.firefly.syncLiveFolders(liveFolders);let changes=0,structuralChanges=0,offline=0;snapshots.forEach(snapshot=>{const result=applyLiveFolderSnapshot(snapshot,{persist:false,notify:false});changes+=result.added+result.removed+result.updated;structuralChanges+=result.added+result.removed;offline+=Number(result.offline)});saveLibrary({refresh:structuralChanges?'full':'targeted'});if(changes)toast('Live folders refreshed',`${changes} library change${changes===1?'':'s'} applied.`);if(offline)toast(`${offline} live folder${offline===1?' is':'s are'} offline`,'Ignifire will keep checking in the background.')}
   catch(error){toast('Could not start live folder sync',error?.message||'Ignifire will retry next time it opens.')}
 }
 async function addLiveFolder(){
@@ -1600,9 +1667,9 @@ function setShuffleEnabled(enabled,{persist=true,reorder=true}={}){
     if(shuffleEnabled){const current=playbackQueue.find(track=>track.id===currentTrack?.id);const rest=playbackOriginalQueue.filter(track=>track.id!==current?.id);playbackQueue=current?[current,...shuffledTracks(rest)]:shuffledTracks(rest)}
     else playbackQueue=playbackOriginalQueue.filter(track=>allTracks().some(item=>item.id===track.id));
   }
-  updatePlaybackModeControls();renderQueue();if(persist)saveLibrary();
+  updatePlaybackModeControls();renderQueue();if(persist)saveLibrary({refresh:'none'});
 }
-function cycleRepeatMode(){repeatMode=repeatMode==='off'?'all':repeatMode==='all'?'one':'off';settings.repeatMode=repeatMode;updatePlaybackModeControls();saveLibrary();toast(repeatMode==='one'?'Repeating current song':repeatMode==='all'?'Repeating queue':'Repeat off')}
+function cycleRepeatMode(){repeatMode=repeatMode==='off'?'all':repeatMode==='all'?'one':'off';settings.repeatMode=repeatMode;updatePlaybackModeControls();saveLibrary({refresh:'none'});toast(repeatMode==='one'?'Repeating current song':repeatMode==='all'?'Repeating queue':'Repeat off')}
 function renderQueue(){
   const list=$('#queueList'),button=$('#queueButton'),badge=$('#queueCount'),summary=$('#queueSummary');if(!list||!button)return;
   const validIds=new Set(allTracks().map(track=>track.id));if(playbackQueueExplicit){playbackQueue=playbackQueue.filter(track=>validIds.has(track.id));playbackOriginalQueue=playbackOriginalQueue.filter(track=>validIds.has(track.id))}
@@ -1627,14 +1694,14 @@ function refreshVisiblePlayStats(track){
 }
 function commitPlayCount(track){
   if(!track||track.pending||pendingPlayCountTrackId!==track.id)return false;
-  pendingPlayCountTrackId=null;track.plays=(Number(track.plays)||0)+1;track.lastPlayed=Date.now();playHistory.push({trackId:track.id,playedAt:track.lastPlayed});if(playHistory.length>2500)playHistory=playHistory.slice(-2500);saveLibrary();refreshVisiblePlayStats(track);return true;
+  pendingPlayCountTrackId=null;track.plays=(Number(track.plays)||0)+1;track.lastPlayed=Date.now();playHistory.push({trackId:track.id,playedAt:track.lastPlayed});if(playHistory.length>2500)playHistory=playHistory.slice(-2500);saveLibrary({tracks:[track.id],albums:[track.albumId],home:true});refreshVisiblePlayStats(track);return true;
 }
 function markTrackFileError(track,error){
   if(!track||track.pending||['AbortError','NotAllowedError'].includes(String(error?.name||'')))return false;
   const mediaError=audio.error,code=Number(mediaError?.code)||0;
   const message=String(mediaError?.message||error?.message||({2:'The audio file could not be reached.',3:'The audio file could not be decoded.',4:'This audio file could not be played.'}[code])||'The audio file could not be read.').slice(0,220);
   if(track.fileError?.source===track.url&&track.fileError?.message===message)return false;
-  track.fileError={message,code,source:track.url||'',detectedAt:Date.now()};saveLibrary();
+  track.fileError={message,code,source:track.url||'',detectedAt:Date.now()};saveLibrary({tracks:[track.id],albums:[track.albumId]});
   toast('Track file needs attention',`Right-click “${track.title}” and choose Resolve file error.`);return true;
 }
 function tryPlayCurrentAudio(){return audio.play().catch(error=>{setPlaying(false);markTrackFileError(currentTrack,error)})}
@@ -1875,7 +1942,7 @@ function setFullscreenMode(mode){
   else if(currentTrack)prepareTrackVideo(currentTrack);
 }
 function updateVisualizerControls(){$$('[data-visualizer]').forEach(button=>button.classList.toggle('active',button.dataset.visualizer===visualizerStyle))}
-function setVisualizerStyle(style){visualizerStyle=['waves','orbit','spectrum'].includes(style)?style:'waves';settings.visualizerStyle=visualizerStyle;updateVisualizerControls();saveLibrary();if(fullscreenMode==='visualizer')drawVisualizer()}
+function setVisualizerStyle(style){visualizerStyle=['waves','orbit','spectrum'].includes(style)?style:'waves';settings.visualizerStyle=visualizerStyle;updateVisualizerControls();saveLibrary({refresh:'none'});if(fullscreenMode==='visualizer')drawVisualizer()}
 function updateFullscreenArtistBackdrop(track=currentTrack){const backdrop=$('#fullscreenArtistBackdrop'),image=track?artistProfile(track.artist).image:'';backdrop.style.backgroundImage=image?`url("${String(image).replace(/["\\]/g,'\\$&')}")`:'';backdrop.classList.toggle('has-image',Boolean(image))}
 function openFullscreen(){const fp=$('#fullscreenPlayer');updateFullscreenArtistBackdrop();fp.classList.add('open');fp.setAttribute('aria-hidden','false');document.body.requestFullscreen?.().catch(()=>{});resizeCanvas();setFullscreenMode(fullscreenMode)}
 function closeFullscreen(){const fp=$('#fullscreenPlayer');videoLookupToken++;$('#onlineVideoHost').innerHTML='';fp.classList.remove('open');fp.setAttribute('aria-hidden','true');if(document.fullscreenElement)document.exitFullscreen?.()}
@@ -1936,7 +2003,7 @@ $('#folderInput').onchange=e=>{if(e.target.files.length){const entries=normalize
 $('#screenshotInput').onchange=e=>{if(e.target.files[0])screenshotWorkflow(e.target.files[0]);e.target.value=''};
 $('#playBtn').onclick=togglePlay;$('#fullPlay').onclick=togglePlay;$('#prevBtn').onclick=()=>nextTrack(-1);$('#nextBtn').onclick=()=>nextTrack(1);$('#fullPrev').onclick=()=>nextTrack(-1);$('#fullNext').onclick=()=>nextTrack(1);$('#fullscreenBtn').onclick=openFullscreen;$('#closeFull').onclick=closeFullscreen;
 $('#queueButton').onclick=()=>$('#queuePanel').classList.contains('open')?closeQueue():openQueue();$('#closeQueue').onclick=closeQueue;$('#queueBackdrop').onclick=closeQueue;$('#clearQueue').onclick=clearPlaybackQueue;
-audio.onplay=()=>{audio.volume=settings.muted?0:settings.volume/100;if(currentTrack?.fileError){delete currentTrack.fileError;saveLibrary()}setPlaying(true);commitPlayCount(currentTrack)};audio.onpause=()=>setPlaying(false);audio.onended=()=>nextTrack(1,{ended:true});audio.onerror=()=>{setPlaying(false);markTrackFileError(currentTrack,audio.error)};audio.ontimeupdate=()=>{if(!audio.duration)return;const p=audio.currentTime/audio.duration*100;setRange($('#progress'),p);$('#elapsed').textContent=formatTime(audio.currentTime);$('#duration').textContent=formatTime(audio.duration);updatePlaybackEnvelope();updateLyricsPosition(audio.currentTime);if(Date.now()-lastDiscordProgressSync>15000){lastDiscordProgressSync=Date.now();syncNativePlaybackState()}};
+audio.onplay=()=>{audio.volume=settings.muted?0:settings.volume/100;if(currentTrack?.fileError){delete currentTrack.fileError;saveLibrary({tracks:[currentTrack.id],albums:[currentTrack.albumId]})}setPlaying(true);commitPlayCount(currentTrack)};audio.onpause=()=>setPlaying(false);audio.onended=()=>nextTrack(1,{ended:true});audio.onerror=()=>{setPlaying(false);markTrackFileError(currentTrack,audio.error)};audio.ontimeupdate=()=>{if(!audio.duration)return;const p=audio.currentTime/audio.duration*100;setRange($('#progress'),p);$('#elapsed').textContent=formatTime(audio.currentTime);$('#duration').textContent=formatTime(audio.duration);updatePlaybackEnvelope();updateLyricsPosition(audio.currentTime);if(Date.now()-lastDiscordProgressSync>15000){lastDiscordProgressSync=Date.now();syncNativePlaybackState()}};
 $('#progress').oninput=e=>{setRange(e.target,e.target.value);if(currentTrack?.url&&audio.duration)audio.currentTime=audio.duration*e.target.value/100;else simProgress=Number(e.target.value);syncNativePlaybackState()};
 $('#volume').oninput=e=>setVolume(e.target.value);$('#volume').onchange=()=>{clearTimeout(volumePersistenceTimer);persistCurrentState()};$('#volumeMute').onclick=toggleMute;
 $('#favoriteTrack').onclick=()=>currentTrack?setTrackFavorite(currentTrack):toast('Nothing is playing');
@@ -1950,7 +2017,17 @@ window.addEventListener('resize',()=>{hideContextMenu();if($('#fullscreenPlayer'
 $('.content').addEventListener('scroll',hideContextMenu,{passive:true});
 window.firefly?.onMediaCommand?.(handleNativeMediaCommand);
 window.firefly?.onDiscordStatus?.(status=>{discordPresenceState=status||discordPresenceState;updateDiscordStatusView()});
-window.firefly?.onAccountSyncStatus?.(status=>{accountSyncState=status||accountSyncState;if(status?.trackFiles?.length||status?.removedLocalTrackIds?.length)applyCloudSyncResult(status,{persist:status.status==='synced'});refreshVisibleCloudBadges();if(status?.storageUsed!=null)accountState.storageUsed=Number(status.storageUsed)||0;if(status?.storageLimit!=null)accountState.storageLimit=Number(status.storageLimit)||accountState.storageLimit;if(status?.code==='STORAGE_QUOTA'&&!cloudQuotaAlertShown){cloudQuotaAlertShown=true;openModal(`<div class="modal-head"><h2>Cloud storage is full</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><p class="modal-intro">Ignifire paused new uploads. Your existing cloud library is still available to stream and download.</p></div><div class="modal-actions"><button class="primary close-modal">Got it</button></div>`)}updateAccountSyncStatusView();if(currentView==='settings'&&settingsTab==='account'&&(status?.status==='synced'||status?.status==='error'))renderSettings()});
+window.firefly?.onAccountSyncStatus?.(status=>{
+  const previousStatus=accountSyncState.status,hasTrackChanges=Boolean(status?.trackFiles?.length||status?.removedLocalTrackIds?.length);
+  accountSyncState=status||accountSyncState;
+  if(hasTrackChanges)applyCloudSyncResult(status,{persist:status.status==='synced'});
+  else if(previousStatus!==accountSyncState.status)refreshVisibleCloudBadges();
+  if(status?.storageUsed!=null)accountState.storageUsed=Number(status.storageUsed)||0;
+  if(status?.storageLimit!=null)accountState.storageLimit=Number(status.storageLimit)||accountState.storageLimit;
+  if(status?.code==='STORAGE_QUOTA'&&!cloudQuotaAlertShown){cloudQuotaAlertShown=true;openModal(`<div class="modal-head"><h2>Cloud storage is full</h2><button class="close-modal">${icon('close')}</button></div><div class="modal-body"><p class="modal-intro">Ignifire paused new uploads. Your existing cloud library is still available to stream and download.</p></div><div class="modal-actions"><button class="primary close-modal">Got it</button></div>`)}
+  updateAccountSyncStatusView();
+  if(currentView==='settings'&&settingsTab==='account'&&(status?.status==='synced'||status?.status==='error'))renderSettings();
+});
 installMediaSessionHandlers();
 syncNativePlaybackState();
 document.addEventListener('keydown',e=>{
