@@ -2,7 +2,7 @@
   "channel": "beta",
   "branch": "beta",
   "version": "0.1.50",
-  "publishedAt": "2026-08-10T00:40:10.0929015Z",
+  "publishedAt": "2026-08-11T01:29:19.3452025Z",
   "audience": "user",
   "highlights": [
     "Missing or unreadable tracks can now be repaired by choosing a replacement audio file without losing metadata, playlists, artwork, lyrics, or listening history.",
@@ -11,5 +11,5 @@
   ],
   "notes": "Adds safe local-and-cloud track replacement, prevents oversized artwork from blocking cloud catalog snapshots, and restores partial web libraries with accurate streamability status.",
   "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.50/Ignifire-0.1.50-Setup.exe",
-  "sha256": ""
+  "sha256": "B3095AFC655DDA4EB45C1ADC56C4100A8EF14394035B256D4AD5C874D389C70C"
 }
