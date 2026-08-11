@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Ignifire Account</title>
+  <link rel="icon" type="image/png" href="/ignifire-logo.png">
+  <link rel="stylesheet" href="/account.css">
+</head>
+<body>
+  <main class="shell">
+    <section class="brand">
+      <div class="mark"><i></i><i></i><i></i><img src="/ignifire-logo.png" alt=""></div>
+      <small>IGNIFIRE ACCOUNT</small>
+      <h1>Your music,<br>still yours.</h1>
+      <p>A secure home for the library you shaped—available whenever you move to another PC.</p>
+      <ul><li>256 GB private storage included</li><li>Cloud sync remains opt-in</li><li>Passkeys, password, email, or phone code</li></ul>
+    </section>
+    <section class="glass">
+      <div id="signedOut">
+        <header><span>WELCOME</span><h2 id="formTitle">Sign in to Ignifire</h2><p>Use the method that feels right today.</p></header>
+        <div class="tabs"><button class="active" data-auth-method="password">Password</button><button data-auth-method="code">Email / phone code</button><button data-auth-method="passkey">Passkey</button></div>
+        <form id="authForm">
+          <label>EMAIL OR PHONE NUMBER<input id="identifier" autocomplete="username" placeholder="you@example.com or +1…" required></label>
+          <label id="nameField" class="hidden">DISPLAY NAME<input id="displayName" autocomplete="name" placeholder="Your name"></label>
+          <label id="passwordField">PASSWORD<input id="password" type="password" autocomplete="current-password" minlength="10" placeholder="10+ characters"></label>
+          <label id="codeField" class="hidden">ONE-TIME CODE<input id="otp" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="6-digit code"></label>
+          <div id="message" role="status"></div>
+          <button class="primary" id="submitAuth">Sign in</button>
+          <button type="button" class="secondary hidden" id="sendCode">Send a code</button>
+        </form>
+        <div class="switch-mode"><span id="switchCopy">New to Ignifire?</span><button id="switchMode">Create an account</button></div>
+        <button class="quiet password-reset" id="resetPassword">Set or reset a password</button>
+      </div>
+      <div id="signedIn" class="hidden">
+        <header><span>CONNECTED</span><h2>Return to Ignifire</h2><p>Your browser session is secure. Connect this Windows app with a short-lived code.</p></header>
+        <div class="identity"><b id="userName">Ignifire listener</b><small id="userIdentity"></small></div>
+        <button class="primary" id="createConnection">Create connection code</button>
+        <div id="connectionPanel" class="connection hidden"><small>PASTE THIS CODE IN IGNIFIRE</small><code id="connectionCode"></code><button id="copyConnection">Copy code</button><p>It expires in five minutes and can only be used once.</p></div>
+        <div class="passkey-tools"><button class="secondary" id="addPasskey">Add a passkey</button><button class="quiet" id="signOut">Sign out</button></div>
+      </div>
+    </section>
+  </main>
+  <script src="/account.js"></script>
+</body>
+</html>

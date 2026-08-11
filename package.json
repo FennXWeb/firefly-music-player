@@ -1,15 +1,17 @@
 {
-  "name": "firefly-music",
-  "version": "0.1.13",
+  "name": "ignifire-music",
+  "version": "0.1.54",
   "private": true,
   "description": "A highly customizable, local-first music player for Windows.",
-  "author": "Firefly",
+  "author": "Ignifire",
   "license": "MIT",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
-    "dist:win": "electron-builder --win portable"
+    "dist:win": "electron-builder --win nsis portable --publish never",
+    "dist:installer": "electron-builder --win nsis --publish never",
+    "dist:portable": "electron-builder --win portable --publish never"
   },
   "devDependencies": {
     "electron": "^37.2.0",
@@ -17,7 +19,7 @@
   },
   "build": {
     "appId": "com.firefly.music",
-    "productName": "Firefly",
+    "productName": "Ignifire",
     "asar": true,
     "npmRebuild": false,
     "directories": {
@@ -25,25 +27,44 @@
     },
     "files": [
       "index.html",
+      "splash.html",
       "styles.css",
       "app.js",
       "main.js",
       "preload.js",
+      "updates/**/*",
       "assets/**/*",
       "package.json"
     ],
     "win": {
-      "icon": "assets/firefly.ico",
+      "icon": "assets/ignifire.ico",
       "target": [
+        "nsis",
         "portable"
       ]
     },
+    "nsis": {
+      "artifactName": "Ignifire-${version}-Setup.exe",
+      "include": "build/installer.nsh",
+      "oneClick": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Ignifire",
+      "uninstallDisplayName": "Ignifire ${version}",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true
+    },
     "portable": {
-      "artifactName": "Firefly-${version}-Windows.exe",
+      "artifactName": "Ignifire-${version}-Portable.exe",
       "requestExecutionLevel": "user"
     }
   },
   "dependencies": {
+    "adm-zip": "^0.6.0",
+    "discord-rpc": "^4.0.1",
     "music-metadata": "^11.14.0"
   }
 }

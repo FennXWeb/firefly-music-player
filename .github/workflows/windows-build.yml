@@ -29,23 +29,39 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content package.json | ConvertFrom-Json).version
-          $asset = "Firefly-$version-Windows.exe"
-          $hash = (Get-FileHash "release/$asset" -Algorithm SHA256).Hash
+          $installer = "Ignifire-$version-Setup.exe"
+          $portable = "Ignifire-$version-Portable.exe"
+          $cloudServer = "Ignifire-Cloud-Server-$version.zip"
+          $webPlayer = "Ignifire-Web-$version.zip"
+          tar -a -cf "release/$cloudServer" -C cloud-server package.json package-lock.json .env.example README.md schema.sql src web public
+          tar -a -cf "release/$webPlayer" -C web-player index.html styles.css app.js manifest.webmanifest sw.js icons README.md
+          $hash = (Get-FileHash "release/$installer" -Algorithm SHA256).Hash
           "version=$version" >> $env:GITHUB_OUTPUT
-          "asset=$asset" >> $env:GITHUB_OUTPUT
+          "installer=$installer" >> $env:GITHUB_OUTPUT
+          "portable=$portable" >> $env:GITHUB_OUTPUT
+          "cloudServer=$cloudServer" >> $env:GITHUB_OUTPUT
+          "webPlayer=$webPlayer" >> $env:GITHUB_OUTPUT
           "sha256=$hash" >> $env:GITHUB_OUTPUT
       - uses: actions/upload-artifact@v4
         with:
-          name: Firefly-Windows-Beta
-          path: release/${{ steps.build.outputs.asset }}
+          name: Ignifire-Windows-Beta
+          path: |
+            release/${{ steps.build.outputs.installer }}
+            release/${{ steps.build.outputs.portable }}
+            release/${{ steps.build.outputs.cloudServer }}
+            release/${{ steps.build.outputs.webPlayer }}
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: beta-v${{ steps.build.outputs.version }}
           target_commitish: beta
-          name: Firefly ${{ steps.build.outputs.version }} Beta
+          name: Ignifire ${{ steps.build.outputs.version }} Beta
           prerelease: true
           make_latest: false
-          files: release/${{ steps.build.outputs.asset }}
+          files: |
+            release/${{ steps.build.outputs.installer }}
+            release/${{ steps.build.outputs.portable }}
+            release/${{ steps.build.outputs.cloudServer }}
+            release/${{ steps.build.outputs.webPlayer }}
       - name: Publish beta updater manifest
         shell: pwsh
         run: |
@@ -54,7 +70,7 @@ jobs:
           $manifest.branch = "beta"
           $manifest.version = "${{ steps.build.outputs.version }}"
           $manifest.publishedAt = (Get-Date).ToUniversalTime().ToString("o")
-          $manifest.downloadUrl = "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v${{ steps.build.outputs.version }}/${{ steps.build.outputs.asset }}"
+          $manifest.downloadUrl = "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v${{ steps.build.outputs.version }}/${{ steps.build.outputs.installer }}"
           $manifest.sha256 = "${{ steps.build.outputs.sha256 }}"
           $manifest | ConvertTo-Json | Set-Content updates/latest.json
           git config user.name "github-actions[bot]"

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Ignifire</title>
+  <style>
+    :root{color-scheme:dark;font-family:"Segoe UI Variable Display","Segoe UI",sans-serif}
+    *{box-sizing:border-box}
+    html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent;user-select:none}
+    body{display:grid;place-items:center;-webkit-app-region:drag;transition:opacity .25s ease,transform .25s cubic-bezier(.4,0,.2,1)}
+    body.closing{opacity:0;transform:scale(.965)}
+    .shell{position:relative;width:536px;height:356px;border-radius:34px;overflow:hidden;background:linear-gradient(145deg,rgba(35,29,40,.98),rgba(9,9,12,.985) 58%,rgba(18,11,20,.99));border:1px solid rgba(255,255,255,.18);box-shadow:inset 0 1px rgba(255,255,255,.22),inset 0 -1px rgba(0,0,0,.78),0 30px 90px rgba(0,0,0,.62)}
+    .shell:before{content:"";position:absolute;inset:-2px;background:linear-gradient(118deg,transparent 12%,rgba(255,255,255,.15) 31%,transparent 43%);transform:translateX(-90%);animation:glass 4.8s ease-in-out infinite;pointer-events:none}
+    .aurora,.aurora:before,.aurora:after{position:absolute;border-radius:50%;filter:blur(54px);pointer-events:none}
+    .aurora{width:280px;height:240px;left:-70px;top:-100px;background:rgba(255,79,49,.36);animation:drift 5s ease-in-out infinite alternate}
+    .aurora:before{content:"";width:220px;height:220px;left:270px;top:120px;background:rgba(142,70,255,.24)}
+    .aurora:after{content:"";width:180px;height:160px;left:115px;top:245px;background:rgba(255,159,56,.18)}
+    .content{position:relative;height:100%;display:flex;flex-direction:column;align-items:center;padding:38px 50px 31px}
+    .logo-wrap{position:relative;width:120px;height:120px;display:grid;place-items:center;margin-bottom:13px}
+    .logo-wrap:before,.logo-wrap:after{content:"";position:absolute;border-radius:50%;inset:8px;border:1px solid rgba(255,158,90,.31);animation:ring 2.6s ease-out infinite}
+    .logo-wrap:after{animation-delay:1.3s}
+    .logo-glow{position:absolute;inset:20px;border-radius:50%;background:linear-gradient(135deg,#ff5a39,#ffb04d 48%,#ba3dff);filter:blur(25px);opacity:.55;animation:pulse 1.8s ease-in-out infinite alternate}
+    .logo{position:relative;width:104px;height:104px;object-fit:contain;filter:drop-shadow(0 15px 24px rgba(255,61,38,.38));animation:float 2.8s ease-in-out infinite}
+    .kicker{font-size:9px;line-height:1;font-weight:800;letter-spacing:.34em;color:#ff9e7f;margin-left:.34em}
+    h1{font-size:38px;line-height:1;margin:7px 0 6px;letter-spacing:-.055em;font-weight:740;background:linear-gradient(105deg,#fff 12%,#fff1df 54%,#ffb29d);-webkit-background-clip:text;background-clip:text;color:transparent}
+    .status{height:18px;color:#aaa3af;font-size:11px;letter-spacing:.02em;transition:opacity .18s ease}
+    .loader{position:relative;width:238px;height:4px;margin-top:24px;border-radius:99px;overflow:hidden;background:rgba(255,255,255,.075);box-shadow:inset 0 1px 2px rgba(0,0,0,.75)}
+    .loader:before{content:"";position:absolute;inset:0;width:44%;border-radius:inherit;background:linear-gradient(90deg,#ff4f3d,#ff9d52 53%,#cb5cff);box-shadow:0 0 18px rgba(255,91,56,.7);animation:load 1.35s cubic-bezier(.65,0,.35,1) infinite}
+    .foot{margin-top:auto;display:flex;align-items:center;gap:8px;color:#625d68;font-size:8px;font-weight:800;letter-spacing:.22em}
+    .foot i{width:4px;height:4px;border-radius:50%;background:#ff7150;box-shadow:0 0 8px #ff7150;animation:blink 1.2s ease-in-out infinite}
+    @keyframes load{0%{transform:translateX(-110%)}100%{transform:translateX(340%)}}
+    @keyframes ring{0%{transform:scale(.65);opacity:0}32%{opacity:.7}100%{transform:scale(1.34);opacity:0}}
+    @keyframes float{50%{transform:translateY(-4px) scale(1.018)}}
+    @keyframes pulse{to{opacity:.78;transform:scale(1.12)}}
+    @keyframes drift{to{transform:translate(42px,27px) scale(1.12)}}
+    @keyframes glass{0%,38%{transform:translateX(-100%)}68%,100%{transform:translateX(120%)}}
+    @keyframes blink{50%{opacity:.3;transform:scale(.7)}}
+    @media (prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;animation-iteration-count:1!important}}
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="aurora"></div>
+    <section class="content">
+      <div class="logo-wrap"><span class="logo-glow"></span><img class="logo" src="assets/ignifire-logo.png" alt=""></div>
+      <div class="kicker">WELCOME BACK</div>
+      <h1>Ignifire</h1>
+      <div class="status" id="status">Preparing your library…</div>
+      <div class="loader" aria-label="Loading"></div>
+      <div class="foot"><i></i> IGNIFIRE DESKTOP</div>
+    </section>
+  </main>
+  <script>
+    const messages=['Preparing your library…','Restoring your preferences…','Warming up the player…','Almost ready…'];
+    let index=0;
+    setInterval(()=>{const status=document.getElementById('status');status.style.opacity='0';setTimeout(()=>{index=(index+1)%messages.length;status.textContent=messages[index];status.style.opacity='1'},180)},1150);
+  </script>
+</body>
+</html>

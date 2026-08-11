@@ -1,0 +1,29 @@
+{
+  "name": "ignifire-cloud-server",
+  "version": "0.1.6",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build:web": "esbuild web/account.js --bundle --minify --format=iife --outfile=public/account.js",
+    "prestart": "npm run build:web",
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "auth:generate": "npx auth@1.6.26 generate --config src/auth.js",
+    "auth:migrate": "npx auth@1.6.26 migrate --config src/auth.js"
+  },
+  "dependencies": {
+    "@better-auth/passkey": "1.6.26",
+    "better-auth": "1.6.26",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "esbuild": "^0.25.12",
+    "express": "^5.2.1",
+    "helmet": "^8.1.0",
+    "nodemailer": "^9.0.5",
+    "pg": "^8.16.3",
+    "twilio": "^6.0.2"
+  }
+}
