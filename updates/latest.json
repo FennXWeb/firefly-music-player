@@ -1,15 +1,15 @@
 {
   "channel": "beta",
   "branch": "beta",
-  "version": "0.1.53",
-  "publishedAt": "2026-08-11T02:37:54.5396312Z",
+  "version": "0.1.54",
+  "publishedAt": "2026-08-11T02:48:00.736Z",
   "audience": "user",
   "highlights": [
-    "Ignifire for Web now has a fully touch-optimized phone and tablet layout with safe-area-aware navigation.",
-    "The web player can be installed on iPhone and iPad from Safari and launches full screen from the Home Screen.",
-    "A new mobile now-playing screen provides large artwork, complete playback controls, seeking, volume, and swipe-down dismissal."
+    "Playlist-themed playback bars now extend cleanly to the right edge of the Windows app.",
+    "Optional volume normalization keeps quieter and louder recordings at a more consistent listening level.",
+    "ReplayGain metadata is honored when available, with automatic dynamics processing for untagged tracks."
   ],
-  "notes": "Makes the web player an installable iOS-capable PWA and rebuilds its responsive navigation, library views, and playback experience for touch devices.",
-  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.53/Ignifire-0.1.53-Setup.exe",
-  "sha256": "7D269396D723BBBD13CFF8947A1E9486BE8CAA4F2D5BCCFBDEEAD8754A69D1EB"
+  "notes": "Fixes the playlist player edge treatment and adds user-controlled playback volume normalization with metadata-aware loudness balancing.",
+  "downloadUrl": "https://github.com/FennXWeb/firefly-music-player/releases/download/beta-v0.1.54/Ignifire-0.1.54-Setup.exe",
+  "sha256": "84C08B91CDDF0C8FAB99E235A0B559362DC3BA0CE4D32216E9A14F448237AE3F"
 }

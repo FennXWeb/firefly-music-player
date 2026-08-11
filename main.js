@@ -1061,6 +1061,11 @@ function decryptSecret(value = '') {
     return safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(buffer) : buffer.toString('utf8');
   } catch { return ''; }
 }
+function replayGainDecibels(value) {
+  if (value == null || value === '') return null;
+  const parsed=Number(value?.dB??value);
+  return Number.isFinite(parsed)?Math.max(-24,Math.min(24,parsed)):null;
+}
 async function entryFor(filePath, root = '') {
   const extension = path.extname(filePath).toLowerCase();
   const entry = {
@@ -1087,6 +1092,7 @@ async function entryFor(filePath, root = '') {
         track: common.track?.no || null,
         disc: common.disk?.no || null,
         duration: parsed.format?.duration || null,
+        replayGainDb: replayGainDecibels(common.replaygain_track_gain??common.replaygain_album_gain),
         artwork: picture ? `data:${picture.format};base64,${Buffer.from(picture.data).toString('base64')}` : null,
         lyrics: embeddedLyrics ? {
           plain: String(embeddedLyrics.text || embeddedLyrics.syncText?.map(line => line.text).join('\n') || '').trim(),
